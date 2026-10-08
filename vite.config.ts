@@ -5,6 +5,15 @@ export default defineConfig({
   base: "./",
   plugins: [react()],
   server: { allowedHosts: [".manus.computer"] },
-  build: { chunkSizeWarningLimit: 1500 },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          three: ["three"],
+          vision: ["@mediapipe/tasks-vision"],
+        },
+      },
+    },
+  },
   test: { environment: "node", include: ["src/**/*.test.ts"] },
 });

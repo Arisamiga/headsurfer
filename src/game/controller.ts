@@ -33,16 +33,38 @@ export class GameController {
   private last = performance.now();
   private hudTimer = 0;
   private resizeObserver: ResizeObserver;
+  private viewVisible = true;
+  private tabVisible = document.visibilityState !== "hidden";
+  private readonly onVisibilityChange = () => {
+    this.tabVisible = document.visibilityState !== "hidden";
+    // Do not simulate the elapsed time while the tab was throttled or hidden.
+    this.last = performance.now();
+  };
 
   constructor(container: HTMLElement, private callbacks: ControllerCallbacks) {
     this.renderer = new GameRenderer(container);
     this.resizeObserver = new ResizeObserver(() => this.renderer.resize());
     this.resizeObserver.observe(container);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
     this.frame = requestAnimationFrame(this.tick);
   }
 
   get renderView() {
     return this.renderer;
+  }
+
+  /** Prevent work for a navigated-away game view without changing its paused/running mode. */
+  setVisible(visible: boolean) {
+    this.viewVisible = visible;
+    this.last = performance.now();
+  }
+
+  setReducedMotion(reduced: boolean) {
+    this.renderer.setReducedMotion(reduced);
+  }
+
+  private get canAdvanceFrame() {
+    return this.viewVisible && this.tabVisible;
   }
 
   /** Practice world: no obstacles, used by the gesture tutorial. */
@@ -83,11 +105,15 @@ export class GameController {
   }
 
   input(action: Action) {
-    if (this.mode === "running" || this.mode === "practice") this.world.apply(action);
+    if (this.canAdvanceFrame && (this.mode === "running" || this.mode === "practice")) this.world.apply(action);
   }
 
   private tick = (now: number) => {
     this.frame = requestAnimationFrame(this.tick);
+    if (!this.canAdvanceFrame) {
+      this.last = now;
+      return;
+    }
     const dt = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
     if (this.mode === "running" || this.mode === "practice") {
@@ -132,6 +158,7 @@ export class GameController {
   dispose() {
     cancelAnimationFrame(this.frame);
     this.resizeObserver.disconnect();
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
     this.sfx.dispose();
     this.renderer.dispose();
   }
