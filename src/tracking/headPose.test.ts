@@ -59,6 +59,18 @@ describe("estimateHeadPose", () => {
     expect(actual.pitch).toBeCloseTo(expected.pitch, 8);
   });
 
+  it("preserves pose geometry for a portrait camera aspect ratio", () => {
+    const physicalFace = face({ rollDeg: -14, noseDx: -0.025, noseDy: 0.018 });
+    // A portrait image has fewer horizontal pixels, so its normalised x values
+    // span proportionally farther for the same physical face geometry.
+    const portraitImage = physicalFace.map((point) => (point ? { ...point, x: point.x * 2 } : point));
+    const expected = estimateHeadPose(physicalFace)!;
+    const actual = estimateHeadPose(portraitImage, 0.5)!;
+    expect(actual.rollDeg).toBeCloseTo(expected.rollDeg, 8);
+    expect(actual.yaw).toBeCloseTo(expected.yaw, 8);
+    expect(actual.pitch).toBeCloseTo(expected.pitch, 8);
+  });
+
   it("rejects non-finite landmark coordinates and invalid aspect ratios", () => {
     const nonFinite = face();
     nonFinite[LANDMARK.noseTip] = { x: Number.NaN, y: 0.5 };

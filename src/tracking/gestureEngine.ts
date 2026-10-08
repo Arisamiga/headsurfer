@@ -6,9 +6,12 @@ type LateralSignal = "roll" | "yaw";
 
 interface GestureIntent {
   action: Action;
-  /** In combined mode, keep the lateral measurement that established intent. */
+  /** In combined mode, retain the lateral signal that established direction. */
   lateralSignal?: LateralSignal;
 }
+
+const REFERENCE_SAMPLE_MS = 1000 / 30;
+const DWELL_EPSILON_MS = 1;
 
 export interface GestureConfig {
   /** 0.5 (stiff) .. 2 (very sensitive). Divides the thresholds. */
@@ -20,7 +23,10 @@ export interface GestureConfig {
   pitchThreshold: number;
   /** Fraction of a threshold below which the head counts as neutral. */
   deadband: number;
+  /** Legacy frame count, converted to a 30 FPS dwell duration when dwellMs is omitted. */
   holdFrames: number;
+  /** Optional gesture dwell override in milliseconds for a specific control profile. */
+  dwellMs?: number;
   cooldownMs: number;
   /** Smoothing response per 30 FPS frame. Converted to elapsed time at runtime. */
   smoothing: number;
@@ -58,23 +64,21 @@ export interface GestureSignals {
   armed: boolean;
 }
 
-/**
- * Converts pose samples into deliberate, one-shot game actions.
- *
- * Filtering is expressed as a response per 30 FPS frame and converted using the
- * elapsed time between real samples. This keeps a slow device from becoming
- * artificially more sluggish simply because its inference rate falls to 20 FPS.
- */
+/** Converts pose samples into deliberate, one-shot game actions. */
 export class GestureEngine {
   config: GestureConfig;
   private neutralPose: HeadPose = { rollDeg: 0, yaw: 0, pitch: 0 };
   private smoothed: HeadPose | null = null;
   private calibrationSamples: HeadPose[] | null = null;
   private candidate: Action | null = null;
-  private candidateFrames = 0;
+  private candidateStartedAt: number | null = null;
   private neutralFrames = 0;
   private lastFire = -Infinity;
-  private lastPoseAt: number | null = null;
+  private lastSampleAt: number | null = null;
+  private fastBlockedUntil = -Infinity;
+  private reacquirePending = false;
+  private pendingOutlier: HeadPose | null = null;
+  private calibrationNoise: HeadPose = { rollDeg: 0, yaw: 0, pitch: 0 };
   private intent: GestureIntent | null = null;
   private armed = true;
   signals: GestureSignals = { lateral: 0, vertical: 0, neutral: true, armed: true };
@@ -92,10 +96,12 @@ export class GestureEngine {
     this.calibrationSamples = [];
     this.calibrated = false;
     this.smoothed = null;
-    this.candidate = null;
-    this.candidateFrames = 0;
+    this.clearCandidate();
     this.neutralFrames = 0;
-    this.lastPoseAt = null;
+    this.lastSampleAt = null;
+    this.fastBlockedUntil = -Infinity;
+    this.reacquirePending = false;
+    this.pendingOutlier = null;
     this.intent = null;
   }
 
@@ -107,11 +113,7 @@ export class GestureEngine {
     return this.calibrationSamples?.length ?? 0;
   }
 
-  /**
-   * Finishes calibration from a stable cluster around the median. Isolated bad
-   * landmark frames are discarded, while a sample set that shows real movement
-   * is rejected instead of silently baking that motion into the neutral pose.
-   */
+  /** Finishes calibration from a stable inlier cluster around the median. */
   finishCalibration(minSamples = 8): boolean {
     const samples = this.calibrationSamples;
     this.calibrationSamples = null;
@@ -119,8 +121,6 @@ export class GestureEngine {
 
     const medianPose = medianOfPoses(samples);
     const limits = {
-      // A neutral collection may contain small natural sway, but should never
-      // contain a meaningful fraction of a game gesture.
       rollDeg: Math.max(2, this.config.rollThresholdDeg * 0.35),
       yaw: Math.max(0.015, this.config.yawThreshold * 0.35),
       pitch: Math.max(0.012, this.config.pitchThreshold * 0.35),
@@ -131,19 +131,20 @@ export class GestureEngine {
         Math.abs(sample.yaw - medianPose.yaw) <= limits.yaw &&
         Math.abs(sample.pitch - medianPose.pitch) <= limits.pitch,
     );
-    // A median is robust to a few outliers. Requiring a clear majority of the
-    // original collection prevents a slow turn during calibration being treated
-    // as a valid baseline merely because its final frames form a small cluster.
     const requiredInliers = Math.max(minSamples, Math.ceil(samples.length * 0.7));
     if (inliers.length < requiredInliers) return this.rejectCalibration();
 
     this.neutralPose = medianOfPoses(inliers);
+    this.calibrationNoise = medianAbsoluteDeviation(inliers, this.neutralPose);
     this.smoothed = { ...this.neutralPose };
     this.calibrated = true;
     this.armed = true;
-    this.candidate = null;
-    this.candidateFrames = 0;
+    this.clearCandidate();
     this.neutralFrames = 0;
+    this.lastSampleAt = null;
+    this.fastBlockedUntil = -Infinity;
+    this.reacquirePending = false;
+    this.pendingOutlier = null;
     this.intent = null;
     return true;
   }
@@ -151,97 +152,143 @@ export class GestureEngine {
   /** Feed one tracking frame. Returns an action when a gesture is accepted. */
   update(pose: HeadPose | null, nowMs: number): Action | null {
     if (!isFinitePose(pose)) {
-      // Do not blend a reappearing face with a pose captured before a camera
-      // stall or face loss. It can otherwise create a gesture from stale data.
+      // A reappearing face must establish a fresh filter sample before it can act.
+      this.reacquirePending ||= this.smoothed !== null || this.pendingOutlier !== null;
       this.smoothed = null;
-      this.candidate = null;
-      this.candidateFrames = 0;
+      this.clearCandidate();
       this.neutralFrames = 0;
-      this.lastPoseAt = null;
+      this.lastSampleAt = null;
+      this.pendingOutlier = null;
       this.intent = null;
+      this.fastBlockedUntil = -Infinity;
       this.signals = { lateral: 0, vertical: 0, neutral: false, armed: this.armed };
       return null;
     }
     if (this.calibrationSamples) {
       this.calibrationSamples.push({ ...pose });
-      this.lastPoseAt = nowMs;
+      this.lastSampleAt = nowMs;
       return null;
     }
     if (!this.calibrated) return null;
 
-    const elapsedMs = this.lastPoseAt === null ? 1000 / 30 : Math.max(1, Math.min(250, nowMs - this.lastPoseAt));
-    this.lastPoseAt = nowMs;
-    const response = clamp(this.config.smoothing, 0, 1);
-    // Convert a per-frame response into a time-based response. At 30 FPS this
-    // equals `smoothing`; at 20 FPS it covers the same amount of physical time.
-    const a = response === 1 ? 1 : 1 - (1 - response) ** (elapsedMs / (1000 / 30));
+    const now = Number.isFinite(nowMs) ? nowMs : this.lastSampleAt ?? 0;
+    const elapsedMs = this.lastSampleAt === null ? REFERENCE_SAMPLE_MS : Math.max(0, now - this.lastSampleAt);
+    this.lastSampleAt = now;
     const previous = this.smoothed ?? pose;
+
+    // One landmark spike cannot create a gesture. A repeated excursion is treated
+    // as a deliberate movement on the next real camera sample.
+    if (this.isOutlier(pose, previous) && !this.matchesPendingOutlier(pose)) {
+      this.pendingOutlier = { ...pose };
+      this.clearCandidate();
+      this.updateSignals(previous);
+      return null;
+    }
+    this.pendingOutlier = null;
+
+    const smoothing = timeAdjustedSmoothing(this.config.smoothing, elapsedMs);
     const smoothed: HeadPose = {
-      rollDeg: previous.rollDeg + (pose.rollDeg - previous.rollDeg) * a,
-      yaw: previous.yaw + (pose.yaw - previous.yaw) * a,
-      pitch: previous.pitch + (pose.pitch - previous.pitch) * a,
+      rollDeg: previous.rollDeg + (pose.rollDeg - previous.rollDeg) * smoothing,
+      yaw: previous.yaw + (pose.yaw - previous.yaw) * smoothing,
+      pitch: previous.pitch + (pose.pitch - previous.pitch) * smoothing,
     };
     this.smoothed = smoothed;
 
-    const filtered = normalisePose(smoothed, this.neutralPose, this.config);
+    const filtered = this.updateSignals(smoothed);
     const raw = normalisePose(pose, this.neutralPose, this.config);
-    const absL = Math.abs(filtered.lateral);
-    const absV = Math.abs(filtered.vertical);
-    const neutral = absL < this.config.deadband && absV < this.config.deadband;
-    this.neutralFrames = neutral ? this.neutralFrames + 1 : 0;
-    // A single frame close to centre is often just landmark wobble. A fired
-    // gesture is re-armed only after two consecutive neutral measurements.
-    if (!this.armed && this.neutralFrames >= 2) this.armed = true;
-    if (neutral) this.intent = null;
-    else if (this.armed && this.intent === null) this.intent = chooseIntent(filtered, this.config);
-    this.signals = { lateral: filtered.lateral, vertical: filtered.vertical, neutral, armed: this.armed };
+    const recovered = this.reacquirePending;
+    this.reacquirePending = false;
+    if (recovered) {
+      this.clearCandidate();
+      this.fastBlockedUntil = now + this.dwellMs();
+      return null;
+    }
 
-    // Strong, single-axis movements should not feel artificially delayed by the
-    // safety confirmation that protects near-threshold movement. A pre-existing
-    // signed intent takes priority, so a noisy sign/source change cannot fire a
-    // conflicting action through this fast path.
+    // A clean high-amplitude motion can bypass dwell, but never override an
+    // already latched signed direction or a recent tracker reacquisition.
     const fastAction = actionFor(raw, this.intent, this.config.fastTrigger, this.config.fastDominance);
-    if (fastAction && this.armed && nowMs - this.lastFire >= this.config.cooldownMs) return this.fire(fastAction, nowMs);
+    if (fastAction && this.armed && now > this.fastBlockedUntil && now - this.lastFire >= this.config.cooldownMs) {
+      return this.fire(fastAction, now);
+    }
 
-    // Once a player has clearly begun a signed direction, preserve that action
-    // through a modest diagonal component instead of rejecting or reversing it.
+    // Preserve the first clearly intended signed action through small diagonal
+    // motion; the opposite sign/source must return to neutral before it can fire.
     const next = actionFor(filtered, this.intent, 1, 1.15);
     if (next !== this.candidate) {
       this.candidate = next;
-      this.candidateFrames = next ? 1 : 0;
-    } else if (next) {
-      this.candidateFrames++;
+      this.candidateStartedAt = next ? now : null;
     }
 
     if (
       next &&
       this.armed &&
-      this.candidateFrames >= this.config.holdFrames &&
-      nowMs - this.lastFire >= this.config.cooldownMs
+      this.candidateStartedAt !== null &&
+      now - this.candidateStartedAt >= this.dwellMs() - DWELL_EPSILON_MS &&
+      now - this.lastFire >= this.config.cooldownMs
     ) {
-      return this.fire(next, nowMs);
+      return this.fire(next, now);
     }
     return null;
   }
 
+  private updateSignals(pose: HeadPose): ReturnType<typeof normalisePose> {
+    const signals = normalisePose(pose, this.neutralPose, this.config);
+    const neutral = Math.abs(signals.lateral) < this.config.deadband && Math.abs(signals.vertical) < this.config.deadband;
+    this.neutralFrames = neutral ? this.neutralFrames + 1 : 0;
+    if (!this.armed && this.neutralFrames >= 2) this.armed = true;
+    if (neutral) this.intent = null;
+    else if (this.armed && this.intent === null) this.intent = chooseIntent(signals, this.config);
+    this.signals = { lateral: signals.lateral, vertical: signals.vertical, neutral, armed: this.armed };
+    return signals;
+  }
+
+  private dwellMs(): number {
+    if (Number.isFinite(this.config.dwellMs)) return Math.max(0, this.config.dwellMs!);
+    return Math.max(0, (Math.max(1, this.config.holdFrames) - 1) * REFERENCE_SAMPLE_MS);
+  }
+
+  private isOutlier(pose: HeadPose, previous: HeadPose): boolean {
+    const threshold = {
+      rollDeg: Math.max(this.config.rollThresholdDeg * 3.5, this.calibrationNoise.rollDeg * 6, 8),
+      yaw: Math.max(this.config.yawThreshold * 3.5, this.calibrationNoise.yaw * 6, 0.04),
+      pitch: Math.max(this.config.pitchThreshold * 3.5, this.calibrationNoise.pitch * 6, 0.03),
+    };
+    return Math.abs(pose.rollDeg - previous.rollDeg) > threshold.rollDeg
+      || Math.abs(pose.yaw - previous.yaw) > threshold.yaw
+      || Math.abs(pose.pitch - previous.pitch) > threshold.pitch;
+  }
+
+  private matchesPendingOutlier(pose: HeadPose): boolean {
+    const pending = this.pendingOutlier;
+    if (!pending) return false;
+    return Math.abs(pose.rollDeg - pending.rollDeg) <= 3
+      && Math.abs(pose.yaw - pending.yaw) <= 0.035
+      && Math.abs(pose.pitch - pending.pitch) <= 0.025;
+  }
+
+  private clearCandidate() {
+    this.candidate = null;
+    this.candidateStartedAt = null;
+  }
+
   private fire(action: Action, nowMs: number): Action {
     this.lastFire = nowMs;
-    // One gesture = one action: require a return to neutral before the next.
     this.armed = false;
     this.intent = null;
     this.signals = { ...this.signals, armed: false };
-    this.candidate = null;
-    this.candidateFrames = 0;
+    this.clearCandidate();
     return action;
   }
 
   private rejectCalibration(): false {
     this.calibrated = false;
     this.smoothed = null;
-    this.candidate = null;
-    this.candidateFrames = 0;
+    this.clearCandidate();
     this.neutralFrames = 0;
-    this.lastPoseAt = null;
+    this.lastSampleAt = null;
+    this.fastBlockedUntil = -Infinity;
+    this.reacquirePending = false;
+    this.pendingOutlier = null;
     this.intent = null;
     return false;
   }
@@ -277,7 +324,6 @@ function actionFor(
   dominance: number,
 ): Action | null {
   if (intent) return supportsIntent(signals, intent, threshold) ? intent.action : null;
-
   const absLateral = Math.abs(signals.lateral);
   const absVertical = Math.abs(signals.vertical);
   if (absLateral >= threshold && absLateral > absVertical * dominance) return signals.lateral > 0 ? "left" : "right";
@@ -310,14 +356,23 @@ function medianOfPoses(samples: HeadPose[]): HeadPose {
   };
 }
 
+function medianAbsoluteDeviation(samples: HeadPose[], centre: HeadPose): HeadPose {
+  return {
+    rollDeg: median(samples.map((sample) => Math.abs(sample.rollDeg - centre.rollDeg))),
+    yaw: median(samples.map((sample) => Math.abs(sample.yaw - centre.yaw))),
+    pitch: median(samples.map((sample) => Math.abs(sample.pitch - centre.pitch))),
+  };
+}
+
+function timeAdjustedSmoothing(smoothing: number, elapsedMs: number): number {
+  const base = Math.max(0, Math.min(1, smoothing));
+  return 1 - (1 - base) ** (Math.max(0, elapsedMs) / REFERENCE_SAMPLE_MS);
+}
+
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
 }
 
 function finiteOrZero(value: number) {

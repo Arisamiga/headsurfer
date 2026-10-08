@@ -1,47 +1,51 @@
-# Going Head Surface — hackathon upgrade
+# Going Head Surface — Rome Rail Pursuit follow-up
 
 ## Product and scope
 
-Preserve the existing TypeScript, React, Vite, Three.js and MediaPipe browser game. The face is the controller: one deliberate head movement emits one discrete lane change, jump or roll. This pass improves the existing prototype rather than replacing the repository or adding account infrastructure. Camera processing stays local; no face geometry, frames or recordings are persisted. Existing rewards and leaderboards remain device-local and in-game only.
+Build on the latest shared `main` (Rome Rail Pursuit asset/audio pack), preserving the existing React/Vite/TypeScript/Three.js/MediaPipe client-only architecture, original assets, physics, rewards and Docker packaging. The user's new direction makes the supplied Mediterranean rail-chase assets the website's identity rather than an unchanged Google-colored dashboard. Google-inspired action colors remain useful, but the Rome artwork leads. Their explicit request supersedes the prior left-only play layout: setup can be split; active gameplay is centered.
 
-The supplied concept PDF and AGENTS.md establish the core: portrait runner on the left, camera and gesture feedback on the right, quick neutral calibration, four-gesture onboarding, keyboard fallback, progressive obstacles, coins, score and restart. The user's new Google-inspired visual direction supersedes the original dark theme.
+Camera frames and face geometry stay local, unrecorded and unpersisted. No accounts, payments, biometric backend, main-branch merge or production publish. Keep all work on a follow-up feature branch and deliver a PR and temporary preview.
 
 ## Implementation
 
-- **Tracking:** validate finite landmarks and correct pixel aspect ratio; collect a stable median neutral pose; reject unstable calibration and isolated noisy neutral resets; maintain hysteresis and one-action-per-gesture locking. Use combined tilt-or-turn lane controls by default, time-aware smoothing so a 20 FPS fallback does not add filter lag, signed early intent for modest diagonal movement, and a one-frame path for strong clean gestures. Keep inference rate-limited, skip hidden tabs and repeated video frames, expose measured inference plus frame-to-action/next-frame diagnostics in debug mode, and reset stale samples after face loss. Fix camera/model startup cancellation and failure cleanup. Load MediaPipe only when head controls are requested.
-- **Rendering:** retain the world and collision rules; recycle entity meshes and instance repeated collectibles/scenery where practical. Dispose unique GPU resources on unmount. Bound pixel ratio and honor reduced motion. Use low-poly, original geometry with no external models or textures.
-- **Interface:** light, playful, high-contrast dashboard with a stronger editorial intro, the game still dominant, clearer camera consent and real camera-off control, immediately readable gesture colors, sensitivity near the camera, concise directional feedback, local-best summary and challenge progress. Accepted gameplay actions receive the strong feedback flash; blocked actions explain why instead of pretending the runner moved. Existing menus, rewards, settings and keyboard controls remain functional. Pause safely during navigation, camera shutdown, or a short confirmed face-loss interval.
-- **Delivery:** portable multi-stage Docker build serving static assets with an unprivileged server, compression, security headers and health endpoint. Self-host the pinned face model and WASM by default, preserve optional custom model URL, and document HTTPS requirements. Add Compose and CI for tests/build/audit. Keep GitHub work on a feature branch and open a reviewable PR, without publishing or merging main.
-- **Dependencies:** no new production UI/model libraries. Use the lockfile, patch the vulnerable test tooling deliberately and rerun its suite. Keep the runtime app client-side.
+**Mobile camera.** Mount the real muted inline video in the visible camera panel before playback, rather than leave it detached. Keep the live source onscreen during setup/play and never `display:none` it to hide the preview; an overlay can hide pixels without stopping capture. Set inline/autoplay attributes explicitly. Request the user-facing camera with soft constraints and controlled fallback for constraint errors, not repeated requests after permission denial. Explain insecure HTTP, iframe policy, unavailable/busy camera and playback errors separately. Bound startup waits, preserve cancellation/resource ownership, and expose measured diagnostics instead of inventing confidence.
+
+**Precision.** Preserve calibrated one-action locking, finite/aspect-aware pose math, stable calibration and return-to-center. Use combined tilt-or-turn lane controls by default, time-aware smoothing that does not add lag at 20 FPS, signed early intent through modest diagonal movement, and a one-frame path for strong clean gestures. Reject isolated tracking spikes without making intentional gestures require large motion. Expose measured inference plus frame-to-action/next-frame diagnostics in debug mode, and add deterministic noisy-sequence and timing regression tests. Keep optional lateral mapping semantics; do not silently import or merge the team's separate unmerged gesture branch.
+
+**Asset-led scene.** Keep the optimized WebP runtime art and original audio, not the large archival PNG/GLB files. Make supplied buildings/rail cars read coherently in the world, reduce repeated facade/rail draw calls where practical, and keep visual obstacle width inside the lane collision footprint. Preserve physics and entity pools. Maintain reset-safe scenery and proper texture/buffer disposal.
+
+**Centered play.** Automatically focus the stage for camera onboarding, tutorial/countdown and active/paused/results states. Center its actual bounds in the window (not the combined stage/sidebar). Fit the portrait canvas to dynamic viewport height, including narrow/landscape phones. Keep a compact camera/status/recenter/off companion visible without covering the lane path; preserve the same video and renderer DOM instead of remounting on mode switches. Restore the asset-led landing layout on returning to the menu. Add touch/swipe fallback through the same discrete input adapter for phones without a working camera, with pause/retry still reachable.
+
+**Delivery.** Tests, typecheck, production build/audit, focused browser checks for the reported mobile/layout defects, and a read-only integration review. Keep Docker static assets local and run its existing CI image/HTTP smoke check on the PR. Exclude archival assets from Docker build context without deleting originals.
 
 ## Project structure
 
-- `src/tracking/`: head pose math, calibrated gesture engine and webcam/model lifecycle; deterministic tests next to logic.
-- `src/game/`: existing world, spawning, controller, audio and Three.js scene. Renderer optimizations do not change score or physics.
-- `src/ui/`: camera panel, gesture guide, HUD, icon/mascot UI and secondary pages.
-- `src/meta/`: existing local storage, outfits and progression.
-- `src/App.tsx`: input adapter and onboarding/run state machine; high-frequency pose stays outside React state.
-- `src/styles.css`: shared Google-inspired tokens, responsive layout, component styles and reduced motion rules.
-- `public/`: original favicon and route manifest; generated MediaPipe files are ignored.
-- `scripts/`: reproducible runtime/model asset preparation.
-- `Dockerfile`, `compose.yaml`, `docker/`: portable build and HTTP serving.
-- `.github/workflows/`: automated checks for the repository.
+- `src/tracking/`: camera/model lifecycle, aspect-aware head pose and calibrated gesture filtering, regression tests.
+- `src/game/`: existing world/spawn/collision/controller/audio and asset-led Three.js scene; renderer changes remain visual only.
+- `src/ui/`: camera/gesture controls, compact touch controls and route-art/ticket motifs.
+- `src/App.tsx`: persistent stage/video orchestration, focus-mode transitions and shared input adapter.
+- `src/styles.css`: Mediterranean tokens, asset composition, centered viewport-aware stage and compact companion.
+- `public/assets/runtime/`, `public/assets/audio/`: supplied browser assets and music; `asset-sources/` remains archival and is never fetched by gameplay.
+- `public/mediapipe/`: generated self-hosted ML assets; `docker/`, Dockerfile/Compose and `.github/workflows/` keep the established production flow.
 
 ## Visual identity
 
-- **Movement:** Google Doodle meets tactile, low-poly toy-town arcade — inspiration only, no Google logo or claim of affiliation.
-- **Principles:** generous white space; playful but legible forms; four-color feedback with text/symbol redundancy; world shapes that teach the required action.
-- **Color philosophy:** warm paper `#f8f9fa`, ink `#202124`, blue `#4285f4`, red `#ea4335`, yellow `#fbbc05`, green `#34a853`. Blue owns the primary action. Darker variants provide readable text on tinted surfaces.
-- **Layout:** broad, asymmetric intro followed by a portrait arcade cabinet and a taller companion control column. Rounded panels and subtle offset borders instead of neon/glass effects. Stack on smaller screens without horizontal overflow.
-- **Signature elements:** an original oversized-head runner; four-color orbit/gesture motifs; a sunlit geometric park/track with colored obstacles and clear collectible paths.
-- **Interactions:** 120–180 ms button feedback, visible focus, a short color pulse for accepted input and unambiguous camera state. Camera permission only follows a deliberate action.
-- **Animation:** low-amplitude toy-character bobbing and smooth lane changes; no expensive postprocessing. Disable camera sway/shake and cosmetic pulses in reduced-motion mode; never obscure gameplay.
-- **Typography:** locally available rounded/system sans (`Trebuchet MS`, Segoe UI, system-ui) for display, system sans for controls, tabular monospace numerals for telemetry. No remote font requests.
-- **Brand essence:** a browser arcade where your face becomes a playful controller. Personality: curious, cheerful, immediate.
-- **Voice:** direct and light. Examples: “A little head tilt. A big adventure.” / “Look sharp. Run wild.”
-- **Wordmark:** retain Going Head Surface, pair it with an original line-art bobble-head mark and four colored accents; not a default-font Google imitation.
-- **Signature color:** Google-inspired blue `#4285f4` with original branding.
+**Movement:** Mediterranean travel poster meets a tactile railway ticket. **Principles:** artwork rather than generic decoration; ink-on-paper clarity; cinematic focus during play; controls readable without competing with the track.
+
+**Palette:** warm travertine paper `#f6f1e7`, charcoal/olive ink `#263a35`, signature terracotta `#c45e3e`, oxidized teal `#2c6259`, antique brass `#b58b35`. Existing blue/red/green/yellow action feedback keeps its practical meaning. Avoid glass/neon and copied brand marks.
+
+**Layout:** asymmetric landing intro paired with an original composition of the supplied palazzo/rail-car/pursuer artwork; portrait railway stage and concise ticket-like control companion below. During play the stage is truly centered with compact edge-mounted controls, not balanced as one left/right grid. Mobile has a visible inline-camera dock and reachable touch input without covering obstacles.
+
+**Signature motifs:** perforated ticket edges and route/episode stamps; Roman facade silhouettes; a small rail monogram in the brand mark. **Typography:** local Georgia serif for editorial route headlines, Trebuchet/system sans for controls/wordmark, tabular monospace for score/route numbers. No remote font dependency.
+
+**Interaction:** short 150–200 ms color/position transitions, visible focus, immediate gesture feedback. Focus entry scrolls the stage into view and does not request browser fullscreen or lose capture. Reduced motion disables decorative transitions, sway and shake.
+
+**Brand essence:** a hands-free Roman rail escape in your browser. Personality: adventurous, warm, mischievous. **Voice:** concise cinematic invitations, clear safety/permission instructions. Examples: “A little tilt. A Roman getaway.” / “Your camera stays here. Your head takes you places.” The product remains Going Head Surface; Rome Rail Pursuit is its route, not a rename of the repository.
 
 ## Known limits
 
-Synthetic tests can demonstrate repeatable numerical behavior, not prove real-person accuracy. The hackathon team still needs a live webcam trial under different lighting/camera positions and a 20-gesture false-trigger check. Docker must be tested where an engine is available; report any environment limitation explicitly. No production publish, paid hosting, remote leaderboard or biometric upload is authorized by this pass.
+Synthetic/browser-emulated tests cannot establish real-person accuracy or guarantee behavior on physical iOS/Android cameras. Document this and provide the direct HTTPS preview for device trials. A LAN address over ordinary HTTP is not a camera-secure context; browser permission policy must not be weakened to bypass security. No accuracy/FPS claim without measurements.
+
+## Final user-directed scope adjustment
+
+Use true optimized GLB models in the game, not the initially planned WebP facade/sprite treatment. Mafiosi chase from behind facing -Z with lightweight procedural run motion; no new physics. Under the hackathon time limit, prioritize removal of stray origin instances, proportional models, clear lanes, mobile inline capture and centered play. The obstructing station canopy and overhead black bars are disabled; no further decorative expansion. Runtime model pack ~1.8 MB. Deliver a feature-branch commit/PR without merging main.

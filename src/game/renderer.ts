@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { LANE_WIDTH } from "./config";
 import type { Obstacle, Pickup, World } from "./world";
 import type { Outfit } from "../meta/progression";
@@ -7,13 +9,28 @@ const SKY = 0x8fc9d9;
 const TRACK_LENGTH = 420;
 const SLEEPER_SPACING = 2;
 const COIN_CAPACITY = 256;
-const assetUrl = (name: string) => `${import.meta.env.BASE_URL}assets/runtime/${name}`;
+const MODEL_WIDTH = 2.08;
+// The generated canopy reads as a block on the line at gameplay distances.
+const SHOW_STATION_CANOPY: boolean = false;
+const modelUrl = (name: string) => `${import.meta.env.BASE_URL}assets/models/${name}.glb`;
 
 type FacadeKey = "palazzo" | "naples";
+type ModelKey = FacadeKey | "station" | "silverTrain" | "terracottaTrain" | "fedora" | "trenchcoat" | "floral";
 const MAX_POOLED_OBSTACLES = 64;
 const MAX_POOLED_PER_OBSTACLE_VARIANT = 3;
 const MAX_POOLED_POWERS = 12;
 const MAX_POOLED_PER_POWER_KIND = 3;
+const TRAIN_MODEL_KEYS: ModelKey[] = ["silverTrain", "terracottaTrain"];
+const MODEL_FILES: Record<ModelKey, string> = {
+  palazzo: "travertine-palazzo",
+  naples: "naples-balcony-house",
+  station: "volcanic-station-canopy",
+  silverTrain: "silver-metro-car",
+  terracottaTrain: "terracotta-commuter-car",
+  fedora: "fedora-pursuer",
+  trenchcoat: "trenchcoat-pursuer",
+  floral: "floral-pursuer",
+};
 
 
 function canvasTexture(width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void) {
@@ -72,7 +89,7 @@ interface TownHouse {
   wallIndex: number;
   roofIndex: number;
   windowIndex: number;
-  facade: THREE.Mesh;
+  facadeKey: FacadeKey;
 }
 
 interface ParkTree {
@@ -83,28 +100,35 @@ interface ParkTree {
 }
 
 interface RailProp {
-  root: THREE.Group;
+  index: number;
   s: number;
+  station: boolean;
+  stationX?: number;
 }
 
 interface Pursuer {
-  sprite: THREE.Sprite;
-  lane: number;
+  key: Extract<ModelKey, "fedora" | "trenchcoat" | "floral">;
+  root?: THREE.Group;
+  side: -1 | 1;
   phase: number;
 }
 
-interface ArtTextures {
-  facades: Record<FacadeKey, THREE.Texture>;
-  station: THREE.Texture;
-  trains: THREE.Texture[];
-  pursuers: THREE.Texture[];
+interface ModelPrimitive {
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material | THREE.Material[];
+  /** Normalized mesh transform including its source scene transform. */
+  matrix: THREE.Matrix4;
 }
 
-interface ArtMaterials {
-  facades: Record<FacadeKey, THREE.MeshBasicMaterial>;
-  station: THREE.SpriteMaterial;
-  trains: THREE.SpriteMaterial[];
-  pursuers: THREE.SpriteMaterial[];
+interface ModelTemplate {
+  key: ModelKey;
+  size: THREE.Vector3;
+  primitives: ModelPrimitive[];
+}
+
+interface ModelBatch {
+  mesh: THREE.InstancedMesh;
+  primitive: ModelPrimitive;
 }
 
 /** Renders a World snapshot. Holds no game state of its own beyond animation. */
@@ -118,12 +142,18 @@ export class GameRenderer {
   private res = this.createResources();
   private trackTexture!: THREE.Texture;
   private groundTexture!: THREE.Texture;
-  private art!: ArtTextures;
-  private artMaterials!: ArtMaterials;
+  private readonly modelLoader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  private readonly modelTemplates = new Map<ModelKey, ModelTemplate>();
+  private readonly loadedGeometries = new Set<THREE.BufferGeometry>();
+  private readonly loadedMaterials = new Set<THREE.Material>();
+  private readonly loadedTextures = new Set<THREE.Texture>();
+  private readonly buildingBatches: Partial<Record<FacadeKey, ModelBatch[]>> = {};
+  private stationBatches?: ModelBatch[];
   private player!: PlayerRig;
   private coinMesh!: THREE.InstancedMesh;
   private readonly instanceDummy = new THREE.Object3D();
   private readonly coinDummy = new THREE.Object3D();
+  private readonly modelMatrix = new THREE.Matrix4();
   private houses: TownHouse[] = [];
   private trees: ParkTree[] = [];
   private houseWalls!: THREE.InstancedMesh;
@@ -134,6 +164,10 @@ export class GameRenderer {
   private buildingSpan = 0;
   private treeSpan = 0;
   private railProps: RailProp[] = [];
+  private railPosts!: THREE.InstancedMesh;
+  private railFeet!: THREE.InstancedMesh;
+  private railBeams!: THREE.InstancedMesh;
+  private railWires!: THREE.InstancedMesh;
   private railSpan = 0;
   private pursuers: Pursuer[] = [];
   private obstacleActive = new Map<number, ActiveVisual>();
@@ -146,6 +180,7 @@ export class GameRenderer {
   private syncEpoch = 0;
   private shake = 0;
   private clock = 0;
+  private sceneryDistance = 0;
   private reducedMotion = false;
   private disposed = false;
 
@@ -162,8 +197,6 @@ export class GameRenderer {
     sun.position.set(-18, 20, 10);
     this.scene.add(sun);
 
-    this.art = this.loadArtTextures();
-    this.artMaterials = this.createArtMaterials();
     this.trackTexture = this.ownTexture(this.createTrackTexture());
     const track = new THREE.Mesh(
       this.ownGeometry(new THREE.PlaneGeometry(LANE_WIDTH * 3 + 0.8, TRACK_LENGTH)),
@@ -216,6 +249,9 @@ export class GameRenderer {
     this.scene.add(this.player.root);
     this.camera.position.set(0, 4.4, 7.2);
     this.resize();
+    // Missing model files are an expected optional-asset path; procedural
+    // geometry remains visible while these async requests resolve.
+    void this.loadModels();
   }
 
   private ownGeometry<T extends THREE.BufferGeometry>(geometry: T) {
@@ -233,53 +269,174 @@ export class GameRenderer {
     return texture;
   }
 
-  private loadTexture(file: string) {
-    const texture = this.ownTexture(new THREE.TextureLoader().load(assetUrl(file)));
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
-    texture.minFilter = THREE.LinearMipmapLinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    return texture;
+  private async loadModels() {
+    await Promise.all((Object.entries(MODEL_FILES) as [ModelKey, string][]).map(async ([key, file]) => {
+      try {
+        const gltf = await this.modelLoader.loadAsync(modelUrl(file));
+        const template = this.createModelTemplate(key, gltf.scene);
+        if (!template) return;
+        if (this.disposed) {
+          this.disposeLoadedTemplate(template);
+          return;
+        }
+        this.modelTemplates.set(key, template);
+        this.installModel(key, template);
+      } catch {
+        // Every GLB is optional. A 404, decode failure, or unsupported texture
+        // leaves the existing lightweight geometry in place without retrying.
+      }
+    }));
   }
 
-  private loadArtTextures(): ArtTextures {
-    return {
-      facades: {
-        palazzo: this.loadTexture("travertine-palazzo.webp"),
-        naples: this.loadTexture("naples-balcony-house.webp"),
-      },
-      station: this.loadTexture("volcanic-station-canopy.webp"),
-      trains: [this.loadTexture("silver-metro-car.webp"), this.loadTexture("terracotta-commuter-car.webp")],
-      pursuers: [
-        this.loadTexture("fedora-pursuer.webp"),
-        this.loadTexture("trenchcoat-pursuer.webp"),
-        this.loadTexture("floral-pursuer.webp"),
-      ],
-    };
+  private createModelTemplate(key: ModelKey, root: THREE.Object3D): ModelTemplate | null {
+    root.updateMatrixWorld(true);
+    const rawBounds = new THREE.Box3().setFromObject(root);
+    if (rawBounds.isEmpty()) return null;
+
+    const rawSize = rawBounds.getSize(new THREE.Vector3());
+    const isTrain = TRAIN_MODEL_KEYS.includes(key);
+    // The generated rail cars can arrive with their long axis on X or Z. Rotate
+    // X-long cars so their length runs down the track, with their front at +Z.
+    const alignment = new THREE.Matrix4();
+    if (isTrain && rawSize.x > rawSize.z) alignment.makeRotationY(-Math.PI / 2);
+    const alignedBounds = rawBounds.clone().applyMatrix4(alignment);
+    const size = alignedBounds.getSize(new THREE.Vector3());
+    if (size.x < 0.0001 || size.y < 0.0001 || size.z < 0.0001) return null;
+
+    const center = alignedBounds.getCenter(new THREE.Vector3());
+    const normalization = new THREE.Matrix4()
+      .makeTranslation(-center.x, -alignedBounds.min.y, -center.z)
+      .multiply(alignment);
+    const primitives: ModelPrimitive[] = [];
+    root.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.geometry || !mesh.material) return;
+      const material = mesh.material;
+      this.loadedGeometries.add(mesh.geometry);
+      for (const entry of Array.isArray(material) ? material : [material]) this.trackLoadedMaterial(entry);
+      primitives.push({
+        geometry: mesh.geometry,
+        material,
+        matrix: new THREE.Matrix4().multiplyMatrices(normalization, mesh.matrixWorld),
+      });
+    });
+    return primitives.length ? { key, size, primitives } : null;
   }
 
-  private createArtMaterials(): ArtMaterials {
-    const facade = (map: THREE.Texture) => this.ownMaterial(new THREE.MeshBasicMaterial({
-      map,
-      transparent: true,
-      alphaTest: 0.04,
-      side: THREE.DoubleSide,
-    }));
-    const sprite = (map: THREE.Texture) => this.ownMaterial(new THREE.SpriteMaterial({
-      map,
-      transparent: true,
-      alphaTest: 0.04,
-      depthWrite: false,
-    }));
-    return {
-      facades: {
-        palazzo: facade(this.art.facades.palazzo),
-        naples: facade(this.art.facades.naples),
-      },
-      station: sprite(this.art.station),
-      trains: this.art.trains.map(sprite),
-      pursuers: this.art.pursuers.map(sprite),
+  private trackLoadedMaterial(material: THREE.Material) {
+    this.loadedMaterials.add(material);
+    for (const value of Object.values(material)) if (value instanceof THREE.Texture) this.loadedTextures.add(value);
+  }
+
+  private installModel(key: ModelKey, template: ModelTemplate) {
+    if (key === "palazzo" || key === "naples") {
+      this.buildingBatches[key] = this.createModelBatches(template, this.houses.length);
+      this.updateScenery(this.sceneryDistance);
+      return;
+    }
+    if (key === "station") {
+      this.stationBatches = this.createModelBatches(template, this.railProps.length);
+      this.updateRailwayProps(this.sceneryDistance);
+      return;
+    }
+    if (TRAIN_MODEL_KEYS.includes(key)) {
+      this.mountAvailableTrainModels();
+      return;
+    }
+    this.mountPursuers(key);
+  }
+
+  private createModelBatches(template: ModelTemplate, capacity: number) {
+    return template.primitives.map((primitive) => {
+      const mesh = new THREE.InstancedMesh(primitive.geometry, primitive.material, capacity);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.frustumCulled = false;
+      mesh.count = capacity;
+      // A batch uses only slots belonging to its model. Three initializes all
+      // other slots as identity matrices, which put a stray building at (0,0,0).
+      const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+      for (let i = 0; i < capacity; i++) mesh.setMatrixAt(i, hidden);
+      this.scene.add(mesh);
+      return { mesh, primitive };
+    });
+  }
+
+  private setModelInstance(
+    batches: ModelBatch[],
+    index: number,
+    x: number,
+    y: number,
+    z: number,
+    sx: number,
+    sy: number,
+    sz: number,
+    rotationY = 0,
+  ) {
+    this.instanceDummy.position.set(x, y, z);
+    this.instanceDummy.rotation.set(0, rotationY, 0);
+    this.instanceDummy.scale.set(sx, sy, sz);
+    this.instanceDummy.updateMatrix();
+    for (const batch of batches) {
+      this.modelMatrix.multiplyMatrices(this.instanceDummy.matrix, batch.primitive.matrix);
+      batch.mesh.setMatrixAt(index, this.modelMatrix);
+    }
+  }
+
+  private markModelBatchesUpdated(batches?: ModelBatch[]) {
+    for (const batch of batches ?? []) batch.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private createModelClone(template: ModelTemplate, width: number, height: number, depth: number) {
+    const root = new THREE.Group();
+    root.scale.set(width / template.size.x, height / template.size.y, depth / template.size.z);
+    for (const primitive of template.primitives) {
+      const mesh = new THREE.Mesh(primitive.geometry, primitive.material);
+      mesh.matrixAutoUpdate = false;
+      mesh.matrix.copy(primitive.matrix);
+      root.add(mesh);
+    }
+    return root;
+  }
+
+  private mountTrainModel(group: THREE.Group, liveryIndex: number, length: number) {
+    if (group.userData.trainModel) return;
+    const preferred = TRAIN_MODEL_KEYS[liveryIndex % TRAIN_MODEL_KEYS.length];
+    const template = this.modelTemplates.get(preferred)
+      ?? this.modelTemplates.get("terracottaTrain")
+      ?? this.modelTemplates.get("silverTrain");
+    if (!template) return;
+    // The normalized clone is grounded and centered. Offset it so its +Z front
+    // meets the obstacle's front face while its width stays inside one lane.
+    const scale = MODEL_WIDTH / template.size.x;
+    const carLength = template.size.z * scale;
+    const cars = Math.max(1, Math.round(length / carLength));
+    const fitted = length / cars;
+    const train = new THREE.Group();
+    for (let i = 0; i < cars; i++) {
+      const car = this.createModelClone(template, MODEL_WIDTH, template.size.y * scale, fitted * 0.97);
+      car.position.z = -(i + 0.5) * fitted;
+      train.add(car);
+    }
+    group.add(train);
+    group.userData.trainModel = train;
+  }
+
+  private mountAvailableTrainModels() {
+    const mount = (object: THREE.Object3D) => {
+      const group = object as THREE.Group;
+      const liveryIndex = group.userData.trainLiveryIndex as number | undefined;
+      const length = group.userData.baseLength as number | undefined;
+      if (liveryIndex !== undefined && length !== undefined) this.mountTrainModel(group, liveryIndex, length);
     };
+    for (const entry of this.obstacleActive.values()) mount(entry.object);
+    for (const available of this.obstaclePool.values()) for (const object of available) mount(object);
+  }
+
+  private disposeLoadedTemplate(template: ModelTemplate) {
+    for (const primitive of template.primitives) {
+      primitive.geometry.dispose();
+      for (const material of Array.isArray(primitive.material) ? primitive.material : [primitive.material]) material.dispose();
+    }
   }
 
   private createResources() {
@@ -360,10 +517,9 @@ export class GameRenderer {
   private createScenery() {
     const houseCountPerSide = 20;
     const houseCount = houseCountPerSide * 2;
-    const wallMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0xc5ab87, roughness: 0.9 }));
-    const roofMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0xb85d3f, roughness: 0.72 }));
-    const windowMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0x243b52, emissive: 0x10202d, emissiveIntensity: 0.25, roughness: 0.35 }));
-    const facadeGeo = this.ownGeometry(new THREE.PlaneGeometry(1, 1));
+    const wallMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0xd6c2a1, roughness: 0.9 }));
+    const roofMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0xc45e3e, roughness: 0.72 }));
+    const windowMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0x263a35, emissive: 0x10202d, emissiveIntensity: 0.25, roughness: 0.35 }));
     this.houseWalls = new THREE.InstancedMesh(this.res.box, wallMat, houseCount);
     this.houseRoofs = new THREE.InstancedMesh(this.ownGeometry(new THREE.ConeGeometry(1, 1, 4)), roofMat, houseCount);
     this.houseWindows = new THREE.InstancedMesh(this.ownGeometry(new THREE.BoxGeometry(1, 1, 0.06)), windowMat, houseCount * 2);
@@ -383,10 +539,7 @@ export class GameRenderer {
         const s = i * spacing + (side > 0 ? spacing / 2 : 0);
         const x = side * (LANE_WIDTH * 1.5 + 4 + width / 2);
         const facadeKey: FacadeKey = (i + (side > 0 ? 1 : 0)) % 3 === 0 ? "naples" : "palazzo";
-        const facade = new THREE.Mesh(facadeGeo, this.artMaterials.facades[facadeKey]);
-        facade.renderOrder = 1;
-        this.scene.add(facade);
-        this.houses.push({ s, x, width, height, depth, wallIndex: houseIndex, roofIndex: houseIndex, windowIndex: houseIndex * 2, facade });
+        this.houses.push({ s, x, width, height, depth, wallIndex: houseIndex, roofIndex: houseIndex, windowIndex: houseIndex * 2, facadeKey });
         this.houseWalls.setColorAt(houseIndex, new THREE.Color([0xc6ad89, 0xd6b88c, 0xb98f74, 0xd5a36f][(i + (side > 0 ? 2 : 0)) % 4]));
         this.houseRoofs.setColorAt(houseIndex, new THREE.Color([0xb85d3f, 0xa94d36, 0xc6754e][(i + (side > 0 ? 1 : 0)) % 3]));
         houseIndex++;
@@ -398,7 +551,7 @@ export class GameRenderer {
     const treeCountPerSide = 22;
     const treeCount = treeCountPerSide * 2;
     const trunkMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0x8a613b, roughness: 1 }));
-    const canopyMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0x34a853, roughness: 0.85, flatShading: true }));
+    const canopyMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0x486549, roughness: 0.85, flatShading: true }));
     this.treeTrunks = new THREE.InstancedMesh(this.ownGeometry(new THREE.CylinderGeometry(0.12, 0.18, 1, 6)), trunkMat, treeCount);
     this.treeCanopies = new THREE.InstancedMesh(this.ownGeometry(new THREE.ConeGeometry(1, 1.8, 6)), canopyMat, treeCount);
     this.treeTrunks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -421,44 +574,43 @@ export class GameRenderer {
     const count = 18;
     const spacing = 18;
     this.railSpan = count * spacing;
+    const makeInstances = (material: THREE.Material, capacity: number) => {
+      const mesh = new THREE.InstancedMesh(this.res.box, material, capacity);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      // Like facades, these matrices move whenever distance changes.
+      mesh.frustumCulled = false;
+      return mesh;
+    };
+    this.railPosts = makeInstances(this.res.postMat, count * 2);
+    this.railFeet = makeInstances(this.res.roofMat, count * 2);
+    this.railBeams = makeInstances(this.res.postMat, count);
+    this.railWires = makeInstances(this.res.railMat, count);
+    this.scene.add(this.railPosts, this.railFeet, this.railBeams, this.railWires);
     for (let i = 0; i < count; i++) {
-      const root = new THREE.Group();
-      for (const side of [-1, 1]) {
-        const post = new THREE.Mesh(this.res.box, this.res.postMat);
-        post.scale.set(0.18, 5.1, 0.18);
-        post.position.set(side * 5.4, 2.55, 0);
-        root.add(post);
-        const foot = new THREE.Mesh(this.res.box, this.res.roofMat);
-        foot.scale.set(0.7, 0.18, 0.7);
-        foot.position.set(side * 5.4, 0.09, 0);
-        root.add(foot);
-      }
-      const beam = new THREE.Mesh(this.res.box, this.res.postMat);
-      beam.scale.set(11.1, 0.14, 0.14);
-      beam.position.y = 4.85;
-      root.add(beam);
-      const wire = new THREE.Mesh(this.res.box, this.res.railMat);
-      wire.scale.set(8.2, 0.035, 0.035);
-      wire.position.y = 4.42;
-      root.add(wire);
+      const prop: RailProp = { index: i, s: i * spacing + 7, station: i % 4 === 1 };
       if (i % 4 === 1) {
-        const station = new THREE.Sprite(this.artMaterials.station);
-        station.scale.set(5.5, 4.1, 1);
-        station.position.set(i % 8 === 1 ? -7.2 : 7.2, 2.0, 0.2);
-        root.add(station);
+        prop.stationX = i % 8 === 1 ? -7.2 : 7.2;
       }
-      this.scene.add(root);
-      this.railProps.push({ root, s: i * spacing + 7 });
+      this.railProps.push(prop);
     }
+    this.updateRailwayProps(0);
   }
 
   private createPursuers() {
-    this.artMaterials.pursuers.forEach((material, index) => {
-      const sprite = new THREE.Sprite(material);
-      sprite.scale.set(2.2, 3.0, 1);
-      this.scene.add(sprite);
-      this.pursuers.push({ sprite, lane: index - 1, phase: index * 1.8 });
+    (["fedora", "trenchcoat", "floral"] as const).forEach((key, index) => {
+      this.pursuers.push({ key, side: index === 1 ? 1 : -1, phase: index * 1.8 });
     });
+  }
+
+  private mountPursuers(key: ModelKey) {
+    const template = this.modelTemplates.get(key);
+    if (!template || (key !== "fedora" && key !== "trenchcoat" && key !== "floral")) return;
+    for (const pursuer of this.pursuers) {
+      if (pursuer.key !== key || pursuer.root) continue;
+      const scale = 1.75 / template.size.y;
+      pursuer.root = this.createModelClone(template, template.size.x * scale, 1.75, template.size.z * scale);
+      this.scene.add(pursuer.root);
+    }
   }
 
   private createSkyProps() {
@@ -480,16 +632,6 @@ export class GameRenderer {
       cloud.position.set(x, y, z);
       cloud.scale.setScalar(scale);
       this.scene.add(cloud);
-    }
-
-    const hillGeo = this.ownGeometry(new THREE.ConeGeometry(14, 15, 5));
-    const hillMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0x74bd63, roughness: 1, flatShading: true }));
-    for (const [x, scale] of [[-20, 1.1], [3, 0.85], [22, 1.25]] as const) {
-      const hill = new THREE.Mesh(hillGeo, hillMat);
-      hill.position.set(x, 2.4, -96);
-      hill.scale.set(scale, scale, scale);
-      hill.rotation.y = 0.45;
-      this.scene.add(hill);
     }
   }
 
@@ -594,22 +736,34 @@ export class GameRenderer {
   }
 
   private updateScenery(travelled: number) {
+    this.sceneryDistance = travelled;
     for (const house of this.houses) {
       while (house.s - travelled < -30) house.s += this.buildingSpan;
       const z = -(house.s - travelled);
-      this.setInstance(this.houseWalls, house.wallIndex, house.x, house.height / 2, z, house.width, house.height, house.depth);
-      this.setInstance(this.houseRoofs, house.roofIndex, house.x, house.height + 0.65, z, house.width * 0.78, 1.3, house.depth * 0.7, Math.PI / 4);
+      const batches = this.buildingBatches[house.facadeKey];
+      const fallbackScale = batches ? 0 : 1;
+      this.setInstance(this.houseWalls, house.wallIndex, house.x, house.height / 2, z, house.width * fallbackScale, house.height * fallbackScale, house.depth * fallbackScale);
+      this.setInstance(this.houseRoofs, house.roofIndex, house.x, house.height + 0.65, z, house.width * 0.78 * fallbackScale, 1.3 * fallbackScale, house.depth * 0.7 * fallbackScale, Math.PI / 4);
       const windowZ = z + house.depth / 2 + 0.04;
-      this.setInstance(this.houseWindows, house.windowIndex, house.x - house.width * 0.23, house.height * 0.56, windowZ, 0.48, 0.72, 1);
-      this.setInstance(this.houseWindows, house.windowIndex + 1, house.x + house.width * 0.23, house.height * 0.56, windowZ, 0.48, 0.72, 1);
+      this.setInstance(this.houseWindows, house.windowIndex, house.x - house.width * 0.23, house.height * 0.56, windowZ, 0.48 * fallbackScale, 0.72 * fallbackScale, fallbackScale);
+      this.setInstance(this.houseWindows, house.windowIndex + 1, house.x + house.width * 0.23, house.height * 0.56, windowZ, 0.48 * fallbackScale, 0.72 * fallbackScale, fallbackScale);
       const side = Math.sign(house.x);
-      house.facade.position.set(house.x - side * (house.width / 2 + 0.025), house.height * 0.51, z);
-      house.facade.rotation.set(0, side > 0 ? -Math.PI / 2 : Math.PI / 2, 0);
-      house.facade.scale.set(house.depth * 0.97, house.height * 1.02, 1);
+      const template = this.modelTemplates.get(house.facadeKey);
+      if (batches && template) {
+        // Building X becomes street length after the inward-facing quarter turn;
+        // source Z becomes the shallow cross-track footprint.
+        // Uniform scale keeps the authored proportions; stretching single-mesh
+        // models to arbitrary boxes smeared their textures.
+        const scale = (house.height * 1.12) / template.size.y;
+        const x = side * (LANE_WIDTH * 1.5 + 4.2 + (template.size.z * scale) / 2);
+        this.setModelInstance(batches, house.wallIndex, x, 0, z, scale, scale, scale, side > 0 ? -Math.PI / 2 : Math.PI / 2);
+      }
     }
     this.houseWalls.instanceMatrix.needsUpdate = true;
     this.houseRoofs.instanceMatrix.needsUpdate = true;
     this.houseWindows.instanceMatrix.needsUpdate = true;
+    this.markModelBatchesUpdated(this.buildingBatches.palazzo);
+    this.markModelBatchesUpdated(this.buildingBatches.naples);
 
     for (const tree of this.trees) {
       while (tree.s - travelled < -26) tree.s += this.treeSpan;
@@ -620,21 +774,66 @@ export class GameRenderer {
     this.treeTrunks.instanceMatrix.needsUpdate = true;
     this.treeCanopies.instanceMatrix.needsUpdate = true;
 
-    for (const prop of this.railProps) {
-      while (prop.s - travelled < -25) prop.s += this.railSpan;
-      prop.root.position.z = -(prop.s - travelled);
-    }
+    this.updateRailwayProps(travelled);
   }
 
-  private updatePursuers(time: number, crashed: boolean) {
+  private updateRailwayProps(travelled: number) {
+    // Scenery is initialized before the reusable overhead structures.
+    if (!this.railPosts) return;
+    for (const prop of this.railProps) {
+      while (prop.s - travelled < -25) prop.s += this.railSpan;
+      const z = -(prop.s - travelled);
+      for (const side of [-1, 1] as const) {
+        const index = prop.index * 2 + (side > 0 ? 1 : 0);
+        this.setInstance(this.railPosts, index, side * 5.4, 2.55, z, 0.18, 5.1, 0.18);
+        this.setInstance(this.railFeet, index, side * 5.4, 0.09, z, 0.7, 0.18, 0.7);
+      }
+      this.setInstance(this.railBeams, prop.index, 0, 4.85, z, 11.1, 0.14, 0.14);
+      this.setInstance(this.railWires, prop.index, 0, 4.42, z, 8.2, 0.035, 0.035);
+      const stationTemplate = this.modelTemplates.get("station");
+      if (SHOW_STATION_CANOPY && this.stationBatches && stationTemplate && prop.station && prop.stationX !== undefined) {
+        const side = Math.sign(prop.stationX);
+        this.setModelInstance(
+          this.stationBatches,
+          prop.index,
+          prop.stationX,
+          0,
+          z + 0.2,
+          5.5 / stationTemplate.size.x,
+          4.1 / stationTemplate.size.y,
+          2 / stationTemplate.size.z,
+          side > 0 ? -Math.PI / 2 : Math.PI / 2,
+        );
+      } else if (this.stationBatches) {
+        this.setModelInstance(this.stationBatches, prop.index, 0, 0, 0, 0, 0, 0);
+      }
+    }
+    this.railPosts.instanceMatrix.needsUpdate = true;
+    this.railFeet.instanceMatrix.needsUpdate = true;
+    this.railBeams.instanceMatrix.needsUpdate = true;
+    this.railWires.instanceMatrix.needsUpdate = true;
+    this.markModelBatchesUpdated(this.stationBatches);
+  }
+
+  private updatePursuers(time: number, world: World) {
+    const { player, speed } = world;
+    const crashed = world.status === "over";
     this.pursuers.forEach((pursuer, index) => {
-      const stride = this.reducedMotion ? 0 : Math.sin(time * 7 + pursuer.phase);
-      const sway = this.reducedMotion ? 0 : Math.sin(time * 1.6 + pursuer.phase) * 0.18;
-      const depth = 34 + index * 9 + (this.reducedMotion ? 0 : Math.sin(time * 0.8 + pursuer.phase) * 2);
-      pursuer.sprite.position.set(pursuer.lane * LANE_WIDTH + sway, 1.32 + Math.abs(stride) * 0.08, -depth);
-      pursuer.sprite.scale.set(2.15 + index * 0.06, 2.95 + index * 0.06, 1);
-      pursuer.sprite.material.rotation = this.reducedMotion ? 0 : stride * 0.025;
-      pursuer.sprite.visible = !crashed;
+      const root = pursuer.root;
+      if (!root) return;
+      const stride = this.reducedMotion ? 0 : Math.sin(time * (4.5 + speed * 0.42) + pursuer.phase);
+      const sway = this.reducedMotion ? 0 : Math.sin(time * (2 + speed * 0.08) + pursuer.phase) * 0.07;
+      const fallingBack = Math.min(0.45, Math.max(0, speed - 13) * 0.022);
+      const lunge = player.stumbleTime > 0 ? -0.48 : 0;
+      const depth = crashed ? 1.1 + index * 0.35 : 2.4 + index * 0.85 + fallingBack + lunge;
+      const lateral = [-1.05, 1.05, 0][index] ?? 0;
+      root.position.set(player.x + lateral + sway, Math.abs(stride) * 0.06, depth);
+      // The generated runners face +X; rotate to world -Z so they chase in the
+      // player's direction. The camera must see their backs, not their faces.
+      root.rotation.set(0, Math.PI / 2, 0);
+      root.rotateZ(this.reducedMotion ? 0 : 0.1);
+      root.rotateX(this.reducedMotion ? 0 : stride * 0.04);
+      root.visible = true;
     });
   }
 
@@ -649,7 +848,7 @@ export class GameRenderer {
   private obstacleKey(obstacle: Obstacle) {
     if (obstacle.kind === "barrier" || obstacle.kind === "gate") return obstacle.kind;
     const colorIndex = obstacle.kind === "moving" ? 0 : obstacle.id % this.res.trainColors.length;
-    const liveryIndex = obstacle.id % this.artMaterials.trains.length;
+    const liveryIndex = obstacle.id % TRAIN_MODEL_KEYS.length;
     // Pool long vehicles by livery and half-unit base length, then scale to the exact world length.
     const lengthBucket = Math.max(0.5, Math.round(obstacle.length * 2) / 2);
     return `${obstacle.kind}:${colorIndex}:${liveryIndex}:${lengthBucket.toFixed(1)}`;
@@ -685,11 +884,9 @@ export class GameRenderer {
       add(r.windowMat, 1.5, 0.8, 0.05, 0, 1.9, 0.01);
       add(r.lightMat, 0.3, 0.2, 0.05, -0.65, 0.7, 0.02);
       add(r.lightMat, 0.3, 0.2, 0.05, 0.65, 0.7, 0.02);
-      const livery = new THREE.Sprite(this.artMaterials.trains[liveryIndex]);
-      livery.scale.set(4.1, 3.15, 1);
-      livery.position.set(0, 1.55, 0.08);
-      group.add(livery);
       group.userData.baseLength = length;
+      group.userData.trainLiveryIndex = liveryIndex;
+      this.mountTrainModel(group, liveryIndex, length);
     }
     group.userData.poolKey = key;
     return group;
@@ -856,7 +1053,7 @@ export class GameRenderer {
     this.trackTexture.offset.y = travelled / SLEEPER_SPACING;
     this.groundTexture.offset.y = travelled / 8;
     this.updateScenery(travelled);
-    this.updatePursuers(t, crashed);
+    this.updatePursuers(t, world);
 
     this.syncObstacles(world.obstacles, p.s, this.syncEpoch);
     this.syncPowers(world.pickups, p.s, t, this.syncEpoch);
@@ -919,7 +1116,25 @@ export class GameRenderer {
     this.resetEntitySync();
     this.obstaclePool.clear();
     this.powerPool.clear();
-    for (const mesh of [this.coinMesh, this.houseWalls, this.houseRoofs, this.houseWindows, this.treeTrunks, this.treeCanopies]) mesh.dispose();
+    for (const mesh of [
+      this.coinMesh,
+      this.houseWalls,
+      this.houseRoofs,
+      this.houseWindows,
+      this.treeTrunks,
+      this.treeCanopies,
+      this.railPosts,
+      this.railFeet,
+      this.railBeams,
+      this.railWires,
+    ]) mesh.dispose();
+    for (const batches of [...Object.values(this.buildingBatches), this.stationBatches]) {
+      for (const batch of batches ?? []) batch.mesh.dispose();
+    }
+    for (const texture of this.loadedTextures) texture.dispose();
+    for (const material of this.loadedMaterials) material.dispose();
+    for (const geometry of this.loadedGeometries) geometry.dispose();
+    this.modelTemplates.clear();
     for (const texture of this.ownedTextures) texture.dispose();
     for (const material of this.ownedMaterials) material.dispose();
     for (const geometry of this.ownedGeometries) geometry.dispose();

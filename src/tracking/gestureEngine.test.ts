@@ -106,8 +106,6 @@ describe("GestureEngine", () => {
   it("does not reverse a signed tilt intent when the alternate lateral signal disagrees", () => {
     const engine = calibrated({ fastTrigger: 99 });
     expect(engine.update(offset({ rollDeg: 9 }), 1000)).toBeNull();
-    // Combined mode would now choose the strong positive yaw, but the signed
-    // roll intent was left and has reversed. It must not become a new action.
     expect(engine.update(offset({ rollDeg: -20, yaw: 0.3 }), 1033)).toBeNull();
     expect(engine.update(offset({ rollDeg: -20, yaw: 0.3 }), 1066)).toBeNull();
   });
@@ -201,5 +199,26 @@ describe("GestureEngine", () => {
     engine.update(neutral, 1066);
     expect(engine.signals.lateral).toBe(0);
     expect(engine.signals.neutral).toBe(true);
+  });
+
+  it("rejects an isolated extreme landmark spike without making a normal tilt harder", () => {
+    const engine = calibrated({ smoothing: 1, holdFrames: 1, cooldownMs: 0 });
+    expect(engine.update(offset({ rollDeg: 55 }), 1000)).toBeNull();
+    expect(engine.update(neutral, 1033)).toBeNull();
+    // A normal, sustained game gesture remains the same magnitude and fires.
+    expect(engine.update(offset({ rollDeg: 20 }), 1066)).toBe("left");
+  });
+
+  it("does not fire from the first non-neutral sample after stale video", () => {
+    const engine = calibrated({ smoothing: 1, holdFrames: 2, cooldownMs: 0, fastTrigger: 99 });
+    engine.update(neutral, 1000);
+    engine.update(offset({ rollDeg: 20 }), 1033);
+    engine.update(null, 1066);
+    engine.update(null, 1082);
+    engine.update(null, 1098);
+
+    expect(engine.update(offset({ rollDeg: 20 }), 1099)).toBeNull();
+    expect(engine.update(offset({ rollDeg: 20 }), 1132)).toBeNull();
+    expect(engine.update(offset({ rollDeg: 20 }), 1165)).toBe("left");
   });
 });
