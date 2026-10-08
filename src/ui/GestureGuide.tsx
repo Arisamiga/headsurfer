@@ -2,8 +2,8 @@ import type { Action } from "../types";
 import { Icon } from "./Icons";
 
 const GESTURES: { action: Action; title: string; subtitle: string; keys: string }[] = [
-  { action: "left", title: "Slowly tilt left", subtitle: "Lane left", keys: "← / A" },
-  { action: "right", title: "Slowly tilt right", subtitle: "Lane right", keys: "→ / D" },
+  { action: "left", title: "Tilt or turn left", subtitle: "Lane left", keys: "← / A" },
+  { action: "right", title: "Tilt or turn right", subtitle: "Lane right", keys: "→ / D" },
   { action: "jump", title: "Lift chin slightly", subtitle: "Jump", keys: "↑ / W / Space" },
   { action: "roll", title: "Lower chin", subtitle: "Roll / duck", keys: "↓ / S" },
 ];

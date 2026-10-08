@@ -19,6 +19,16 @@ interface Props {
   onToggleCamera: () => void;
   onRecalibrate: () => void;
   canRecalibrate: boolean;
+  showDiagnostics: boolean;
+  diagnostics: {
+    inferenceMs: number | null;
+    inferenceFps: number;
+    targetInferenceFps: number;
+    frameToActionMs: number | null;
+    frameToNextFrameMs: number | null;
+    lastAction: string | null;
+    lastOutcome: "accepted" | "blocked" | null;
+  };
 }
 
 const OVERLAY_POINTS = [1, 4, 10, 152, 33, 133, 263, 362, 61, 291, 234, 454, 70, 300, 13, 14, 168, 197, 5, 50, 280, 105, 334, 159, 386];
@@ -40,7 +50,22 @@ export function CameraPanel(props: Props) {
       const meter = (value: number) => `${50 + Math.max(-1.6, Math.min(1.6, value)) * 25}%`;
       if (lateralRef.current) lateralRef.current.style.left = meter(-signals.lateral);
       if (verticalRef.current) verticalRef.current.style.left = meter(signals.vertical);
-      const label = !frame.pose ? "Looking for your face" : !engine.calibrated ? "Finding your neutral pose" : !signals.armed ? "Return to center" : signals.neutral ? "Centered · ready" : "Reading your movement";
+      const lateralVerb = engine.config.lateralMode === "turn" ? "Turn" : engine.config.lateralMode === "tilt" ? "Tilt" : "Tilt or turn";
+      const label = !frame.pose
+        ? "Looking for your face"
+        : !engine.calibrated
+          ? "Finding your neutral pose"
+          : !signals.armed
+            ? "Return to center to re-arm"
+            : signals.lateral >= 0.62
+              ? `${lateralVerb} left a little further`
+              : signals.lateral <= -0.62
+                ? `${lateralVerb} right a little further`
+                : signals.vertical >= 0.62
+                  ? "Lift your chin a little further"
+                  : signals.vertical <= -0.62
+                    ? "Lower your chin a little further"
+                    : "Centered · ready";
       setFeedback((previous) => previous.label === label && Math.abs(previous.inference - frame.inferenceMs) < 5 ? previous : { label, inference: frame.inferenceMs });
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext("2d");
@@ -69,6 +94,7 @@ export function CameraPanel(props: Props) {
   }, [tracker, engine, active, mirror, showCamera, showLandmarks]);
 
   const state = props.loading ? "Starting…" : !active ? "Camera off" : faceFound ? "Face detected" : "Searching…";
+  const lateralLabel = engine.config.lateralMode === "turn" ? "Turn" : engine.config.lateralMode === "tilt" ? "Tilt" : "Lane";
   return (
     <section className="panel camera-panel" aria-label="Head tracking">
       <div className="panel-head">
@@ -79,7 +105,7 @@ export function CameraPanel(props: Props) {
         {active ? <canvas ref={canvasRef} aria-label="Local webcam preview" /> : (
           <div className="camera-placeholder">
             <div className="face-brackets"><Mascot /></div>
-            <strong>A little tilt goes a long way.</strong>
+            <strong>A little head move goes a long way.</strong>
             <p>Enable your camera to turn your head into a controller.</p>
           </div>
         )}
@@ -89,7 +115,7 @@ export function CameraPanel(props: Props) {
         <>
           <div className="tracking-feedback"><span className="live-dot" /><strong>{feedback.label}</strong><span>{Math.round(feedback.inference)} ms</span></div>
           <div className="meters" aria-label="Live head signals">
-            <div className="meter"><span>Tilt</span><div className="meter-track"><i className="threshold" style={{ left: "25%" }} /><i className="threshold" style={{ left: "75%" }} /><b ref={lateralRef} /></div></div>
+            <div className="meter"><span>{lateralLabel}</span><div className="meter-track"><i className="threshold" style={{ left: "25%" }} /><i className="threshold" style={{ left: "75%" }} /><b ref={lateralRef} /></div></div>
             <div className="meter"><span>Nod</span><div className="meter-track"><i className="threshold" style={{ left: "25%" }} /><i className="threshold" style={{ left: "75%" }} /><b ref={verticalRef} /></div></div>
           </div>
           <div className="camera-actions">
@@ -97,6 +123,18 @@ export function CameraPanel(props: Props) {
             <button className="ghost" onClick={props.onRecalibrate} disabled={!props.canRecalibrate}><Icon name="refresh" />Recenter</button>
             <button className="ghost camera-stop" onClick={props.onStop} aria-label="Turn camera off"><Icon name="power" /></button>
           </div>
+          {props.showDiagnostics && (
+            <details className="tracking-debug">
+              <summary>Input diagnostics</summary>
+              <div>
+                <span>Tracking {props.diagnostics.inferenceFps.toFixed(1)} / {props.diagnostics.targetInferenceFps} FPS</span>
+                <span>Inference {props.diagnostics.inferenceMs === null ? "—" : `${Math.round(props.diagnostics.inferenceMs)} ms`}</span>
+                <span>Frame → action {props.diagnostics.frameToActionMs === null ? "—" : `${Math.round(props.diagnostics.frameToActionMs)} ms`}</span>
+                <span>Frame → next frame {props.diagnostics.frameToNextFrameMs === null ? "—" : `${Math.round(props.diagnostics.frameToNextFrameMs)} ms`}</span>
+                <span>Last input {props.diagnostics.lastAction ? `${props.diagnostics.lastAction} · ${props.diagnostics.lastOutcome}` : "—"}</span>
+              </div>
+            </details>
+          )}
         </>
       ) : <button className="camera-enable" onClick={props.onEnable} disabled={props.loading}><Icon name="camera" />{props.loading ? "Starting camera…" : "Enable head controls"}</button>}
       <label className="quick-sensitivity"><span>Sensitivity <b>{props.sensitivity.toFixed(1)}×</b></span><input type="range" min="0.5" max="2" step="0.05" value={props.sensitivity} onChange={(e) => props.onSensitivity(Number(e.target.value))} /></label>

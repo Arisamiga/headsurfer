@@ -1,4 +1,4 @@
-import type { Action } from "../types";
+import type { Action, ActionResult } from "../types";
 import { TUNING, laneX, type Lane } from "./config";
 import { createRng, type Rng } from "./rng";
 import { spawnRow } from "./spawner";
@@ -134,7 +134,7 @@ export class World {
   }
 
   get grounded() {
-    return this.player.y <= 0 && this.player.vy <= 0;
+    return this.player.y <= 0 && this.player.vy <= 0 && !this.player.rollQueued;
   }
 
   get rolling() {
@@ -165,21 +165,21 @@ export class World {
     return pickup;
   }
 
-  apply(action: Action) {
-    if (this.status !== "running") return;
+  apply(action: Action): ActionResult {
+    if (this.status !== "running") return { accepted: false, action, reason: "not-running" };
     const p = this.player;
     switch (action) {
       case "left":
       case "right": {
         const target = (p.lane + (action === "left" ? -1 : 1)) as Lane;
-        if (target < -1 || target > 1) return;
+        if (target < -1 || target > 1) return { accepted: false, action, reason: "lane-edge" };
         p.prevLane = p.lane;
         p.lane = target;
         this.stats.laneChanges++;
         break;
       }
       case "jump":
-        if (!this.grounded) return;
+        if (!this.grounded) return { accepted: false, action, reason: "airborne" };
         p.vy = TUNING.jumpVelocity;
         p.rollTime = 0;
         p.rollQueued = false;
@@ -187,11 +187,13 @@ export class World {
         this.stats.jumps++;
         break;
       case "roll":
+        if (p.rollQueued) return { accepted: false, action, reason: "roll-queued" };
         if (!this.grounded) {
           // Slam down and roll on landing.
           p.vy = Math.min(p.vy, -TUNING.fastDropVelocity);
           p.rollQueued = true;
         } else {
+          if (p.rollTime > 0) return { accepted: false, action, reason: "rolling" };
           p.rollTime = TUNING.rollDuration;
         }
         p.lastRollAt = this.time;
@@ -199,6 +201,7 @@ export class World {
         break;
     }
     this.events.push({ type: "action", action });
+    return { accepted: true, action };
   }
 
   update(dt: number) {
@@ -217,7 +220,7 @@ export class World {
     p.x += (laneX(p.lane) - p.x) * Math.min(1, dt * TUNING.laneLerp);
     this.lastTimeInLane[p.lane] = this.time;
 
-    if (p.y > 0 || p.vy > 0) {
+    if (p.y > 0 || p.vy !== 0) {
       p.vy -= TUNING.gravity * dt;
       p.y += p.vy * dt;
       if (p.y <= 0) {

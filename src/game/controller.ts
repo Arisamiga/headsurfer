@@ -1,4 +1,4 @@
-import type { Action } from "../types";
+import type { Action, ActionResult } from "../types";
 import { Sfx } from "./audio";
 import { GameRenderer } from "./renderer";
 import { World, type WorldEvent } from "./world";
@@ -104,8 +104,9 @@ export class GameController {
     this.world = new World(1, { spawn: false });
   }
 
-  input(action: Action) {
-    if (this.canAdvanceFrame && (this.mode === "running" || this.mode === "practice")) this.world.apply(action);
+  input(action: Action): ActionResult {
+    if (this.canAdvanceFrame && (this.mode === "running" || this.mode === "practice")) return this.world.apply(action);
+    return { accepted: false, action, reason: "not-running" };
   }
 
   private tick = (now: number) => {

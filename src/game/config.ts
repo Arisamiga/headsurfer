@@ -19,7 +19,7 @@ export const TUNING = {
   firstRowAt: 55,
   /** Reaction time between obstacle rows: head gestures need more than thumbs. */
   rowGapTimeEasy: 1.75,
-  rowGapTimeHard: 1.0,
+  rowGapTimeHard: 1.25,
   difficultyRampSeconds: 150,
   movingObstacleSpeedRatio: 0.45,
   nearMissWindow: 0.5,

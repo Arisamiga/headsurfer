@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Action } from "./types";
+import type { Action, ActionBlockReason, ActionResult } from "./types";
 import { GameController, type HudState } from "./game/controller";
 import type { World, WorldEvent } from "./game/world";
 import { HeadTracker, type TrackingFrame } from "./tracking/headTracker";
@@ -28,11 +28,11 @@ type InputMode = "head" | "keyboard";
 const TUTORIAL: { action: Action; prompt: string }[] = [
   { action: "jump", prompt: "Lift your chin slightly to jump" },
   { action: "roll", prompt: "Lower your chin toward your chest to roll / duck" },
-  { action: "left", prompt: "Slowly tilt your head left" },
-  { action: "right", prompt: "Slowly tilt your head right" },
+  { action: "left", prompt: "Tilt or turn your head left" },
+  { action: "right", prompt: "Tilt or turn your head right" },
 ];
 const CALIBRATION_MS = 1500;
-const FACE_LOST_PAUSE_MS = 1200;
+const FACE_LOST_PAUSE_MS = 350;
 const KEYMAP: Record<string, Action> = {
   ArrowLeft: "left",
   KeyA: "left",
@@ -50,10 +50,38 @@ const EMPTY_HUD: HudState = { score: 0, coins: 0, distance: 0, multiplier: 1, co
 interface Popup {
   id: number;
   text: string;
-  tone: "good" | "bad" | "power";
+  tone: "good" | "bad" | "power" | "info";
 }
 
 type RunResult = RunOutcome & { score: number; stats: World["stats"]; crashedInto: string | null };
+
+interface TrackingDiagnostics {
+  inferenceMs: number | null;
+  inferenceFps: number;
+  targetInferenceFps: number;
+  frameToActionMs: number | null;
+  frameToNextFrameMs: number | null;
+  lastAction: Action | null;
+  lastOutcome: "accepted" | "blocked" | null;
+}
+
+const EMPTY_TRACKING_DIAGNOSTICS: TrackingDiagnostics = {
+  inferenceMs: null,
+  inferenceFps: 0,
+  targetInferenceFps: 0,
+  frameToActionMs: null,
+  frameToNextFrameMs: null,
+  lastAction: null,
+  lastOutcome: null,
+};
+
+const BLOCKED_ACTION_COPY: Record<ActionBlockReason, string> = {
+  "lane-edge": "Already at the edge",
+  airborne: "Land before jumping again",
+  "roll-queued": "Roll is already queued",
+  rolling: "Already rolling",
+  "not-running": "Run is paused",
+};
 
 export default function App() {
   const [view, setView] = useState<View>("play");
@@ -75,6 +103,7 @@ export default function App() {
   const [pauseReason, setPauseReason] = useState<"user" | "face" | null>(null);
   const [result, setResult] = useState<RunResult | null>(null);
   const [webglError, setWebglError] = useState(false);
+  const [trackingDiagnostics, setTrackingDiagnostics] = useState<TrackingDiagnostics>(EMPTY_TRACKING_DIAGNOSTICS);
 
   const gameRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<GameController | null>(null);
@@ -91,6 +120,8 @@ export default function App() {
   const runActiveRef = useRef(false);
   const popupId = useRef(0);
   const cameraRequestRef = useRef(0);
+  const diagnosticsUiAtRef = useRef(-Infinity);
+  const actionSampleRef = useRef(0);
 
   const setPhase = useCallback((p: Phase) => {
     phaseRef.current = p;
@@ -201,13 +232,42 @@ export default function App() {
   }, []);
 
   const handleAction = useCallback(
-    (action: Action) => {
-      setFlash((f) => ({ action, id: (f?.id ?? 0) + 1 }));
+    (action: Action, source: InputMode = "keyboard", frameTime?: number) => {
       const controller = controllerRef.current;
       const current = phaseRef.current;
-      if (current === "running") controller?.input(action);
-      else if (current === "tutorial") {
-        controller?.input(action);
+      if (current === "over" && action === "jump" && performance.now() - overAtRef.current > 1500) {
+        // Look up (or press up) to retry without touching the mouse.
+        beginRun();
+        return;
+      }
+      if (current !== "running" && current !== "tutorial") return;
+
+      const outcome: ActionResult = controller?.input(action) ?? { accepted: false, action, reason: "not-running" };
+      if (source === "head" && frameTime !== undefined) {
+        const actionSample = ++actionSampleRef.current;
+        const frameToActionMs = Math.max(0, performance.now() - frameTime);
+        setTrackingDiagnostics((previous) => ({
+          ...previous,
+          lastAction: action,
+          lastOutcome: outcome.accepted ? "accepted" : "blocked",
+          frameToActionMs,
+          frameToNextFrameMs: null,
+        }));
+        if (outcome.accepted) {
+          requestAnimationFrame((nextFrameAt) => {
+            if (actionSampleRef.current !== actionSample) return;
+            setTrackingDiagnostics((previous) => ({ ...previous, frameToNextFrameMs: Math.max(0, nextFrameAt - frameTime) }));
+          });
+        }
+      }
+
+      if (!outcome.accepted) {
+        if (current === "running") pushPopup(BLOCKED_ACTION_COPY[outcome.reason], "info");
+        return;
+      }
+
+      setFlash((f) => ({ action, id: (f?.id ?? 0) + 1 }));
+      if (current === "tutorial") {
         const step = stateRef.current.tutorialStep;
         if (TUTORIAL[step]?.action === action) {
           controller?.sfx.play({ type: "gesture" });
@@ -217,16 +277,22 @@ export default function App() {
           }
           setTutorialStep(step + 1);
         }
-      } else if (current === "over" && action === "jump" && performance.now() - overAtRef.current > 1500) {
-        // Look up (or press up) to retry without touching the mouse.
-        beginRun();
       }
     },
-    [beginRun, finishTutorial],
+    [beginRun, finishTutorial, pushPopup],
   );
 
   const onFrame = useCallback(
     (frame: TrackingFrame) => {
+      if (frame.time - diagnosticsUiAtRef.current >= 200) {
+        diagnosticsUiAtRef.current = frame.time;
+        setTrackingDiagnostics((previous) => ({
+          ...previous,
+          inferenceMs: frame.inferenceMs,
+          inferenceFps: frame.telemetry.inferenceFps,
+          targetInferenceFps: frame.telemetry.targetInferenceFps,
+        }));
+      }
       const face = faceRef.current;
       if (frame.pose) {
         face.last = frame.time;
@@ -275,7 +341,7 @@ export default function App() {
         return;
       }
       if (inputModeRef.current !== "head") return;
-      if (action) handleAction(action);
+      if (action) handleAction(action, "head", frame.time);
 
       if ((current === "running" || current === "countdown") && runActiveRef.current && frame.time - face.last > FACE_LOST_PAUSE_MS) {
         pause("face");
@@ -458,6 +524,7 @@ export default function App() {
   const tutorialTarget = phase === "tutorial" ? TUTORIAL[tutorialStep]?.action : null;
   const showHud = phase === "running" || phase === "paused" || phase === "countdown" || phase === "over";
   const myEntryDate = result?.rank ? result.board[result.rank - 1]?.date : undefined;
+  const showDiagnostics = import.meta.env.DEV || new URLSearchParams(window.location.search).has("debug");
 
   return (
     <div className="app">
@@ -699,6 +766,8 @@ export default function App() {
             onToggleCamera={() => setSettings((s) => ({ ...s, showCamera: !s.showCamera }))}
             onRecalibrate={recalibrate}
             canRecalibrate={trackerActive && inputMode === "head" && phase !== "camera" && phase !== "calibrate"}
+            showDiagnostics={showDiagnostics}
+            diagnostics={trackingDiagnostics}
           />
           <GestureGuide flash={flash} highlight={tutorialTarget} invertVertical={settings.invertVertical} />
           <section className="panel mini-challenges">

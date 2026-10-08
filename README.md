@@ -22,7 +22,7 @@ npm run build              # static output in dist/
 
 The original runner now has a light, Google Doodle-inspired four-color interface and an original Rome Rail Pursuit route. There are no copied Google or Subway Surfers assets and no affiliation with either game/brand. Scores, daily challenges, outfits and coins stay on this device; coins have no monetary value.
 
-Head tracking corrects landmark coordinates for camera aspect ratio, rejects unstable calibration, and requires two centered frames before rearming a fired gesture. MediaPipe loads only when head controls are enabled. Camera/model startup cancellation, failures and stalled frames are handled explicitly; leaving Play or switching to keyboard stops the webcam. Hide preview only hides the image—the power button actually turns the camera off.
+Head tracking corrects landmark coordinates for camera aspect ratio, rejects unstable calibration, and requires two centered frames before rearming a fired gesture. Lane controls accept a tilt or a sideways head turn by default; strong, clean gestures can bypass the normal confirmation frame while near-threshold movement remains protected. MediaPipe loads only when head controls are enabled. Camera/model startup cancellation, failures and stalled frames are handled explicitly; leaving Play or switching to keyboard stops the webcam. Hide preview only hides the image—the power button actually turns the camera off.
 
 The renderer instances coins, houses and trees, pools obstacle/power-up meshes, caps pixel ratio at 1.5 and releases GPU resources on teardown. Hidden tabs and non-game pages suppress rendering/inference work. Settings includes reduced motion; camera-panel sensitivity can be tuned without leaving Play. These are engineering improvements, not a promise of a particular FPS or measured real-face accuracy.
 
@@ -70,9 +70,9 @@ All characters, environments, UI and sounds are original. As the concept's IP no
 
 ## Recommended head controls
 
-- Move left/right: slowly tilt your head left/right (tilt-only is the default).
+- Move left/right: slowly tilt or turn your head left/right (combined control is the default).
 - Jump: lift your chin / look slightly upward.
 - Roll / duck: lower your chin toward your chest.
 - Neutral / rest: return your head to centre before the next action.
 
-Use small, gentle movements within a comfortable range; never force a stretch. These are game controls, not a therapeutic exercise programme. Existing saved control preferences are preserved, and alternate lane controls remain available in Settings.
+Use small, gentle movements within a comfortable range; never force a stretch. These are game controls, not a therapeutic exercise programme. Existing saved control preferences are preserved, and tilt-only or turn-only lane controls remain available in Settings.

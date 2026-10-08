@@ -117,6 +117,9 @@ kbd { font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; color: var(-
 .quick-sensitivity input { width: 47%; height: 4px; accent-color: var(--blue); }
 .fine-print { display: flex; justify-content: center; align-items: center; gap: 5px; margin: 15px 0 0; color: #697680; font-size: 9px; }
 .fine-print .icon { width: 12px; height: 12px; color: #188038; }
+.tracking-debug { margin-top: 14px; padding: 9px 10px; border-radius: 9px; background: #f8fafd; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.tracking-debug summary { cursor: pointer; color: #42566b; font-family: "Segoe UI", system-ui, sans-serif; font-size: 10px; font-weight: 600; }
+.tracking-debug > div { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin-top: 9px; }
 .gesture-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .gesture { --gesture-color: #1a73e8; --gesture-bg: #e8f0fe; display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: 12px; border: 1px solid #e8edf4; background: #fafbfd; }
 .gesture-right { --gesture-color: #c5221f; --gesture-bg: #fce8e6; }
@@ -162,6 +165,7 @@ kbd { font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; color: var(-
 .popup.good { color: #925600; }
 .popup.power { color: #137333; }
 .popup.bad { color: #c5221f; }
+.popup.info { color: #526b84; font-size: 12px; }
 @keyframes popup { 0% { transform: translateY(10px); opacity: 0; } 15% { opacity: 1; } 100% { transform: translateY(-25px); opacity: 0; } }
 .overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 26px; text-align: center; background: #fffffff0; }
 .overlay h1 { margin: 0; font: 700 clamp(34px, 3.8vw, 48px)/1.04 "Trebuchet MS", "Segoe UI", sans-serif; letter-spacing: -2px; }
