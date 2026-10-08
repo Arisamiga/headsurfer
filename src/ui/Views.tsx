@@ -109,19 +109,20 @@ export function HowItWorksView() {
           <strong>Hold still to calibrate.</strong> We record your neutral pose, so any seating position or camera angle works.
         </li>
         <li>
-          <strong>Learn four gestures.</strong> Look up to jump, look down to roll, tilt left or right to switch lanes.
+          <strong>Learn four gestures.</strong> Slowly tilt left or right to switch lanes. Lift your chin / look slightly upward to jump. Lower your chin toward your chest to roll / duck. Return your head to centre to rest between actions.
         </li>
         <li>
           <strong>Run.</strong> Dodge trains, jump barriers, roll under gates, grab coins and power-ups. It speeds up until you crash.
         </li>
       </ol>
+      <p className="muted">Keep movements small, slow and gentle. Stay within a comfortable range, never force a stretch, and stop if you feel discomfort. Keyboard controls are always available.</p>
       <h3>Tracking rules</h3>
       <ul>
         <li>Small natural movements inside the neutral zone do nothing.</li>
         <li>A gesture must hold for a couple of frames, and each one triggers exactly one move. Return to neutral before the next.</li>
         <li>A short cooldown after each move prevents accidental double moves.</li>
         <li>If your face leaves the camera, the game pauses and resumes when you are back.</li>
-        <li>Adjust sensitivity in Settings, or switch lane control to tilt-only or turn-only.</li>
+        <li>Tilt-only lane control is the default. Adjust sensitivity in Settings, or choose turn-only or tilt-and-turn controls.</li>
       </ul>
       <h3>Scoring</h3>
       <ul>
@@ -155,7 +156,7 @@ export function SettingsView({ settings, onChange }: { settings: Settings; onCha
         <span>Lane control</span>
         <select value={settings.lateralMode} onChange={(e) => set("lateralMode", e.target.value as Settings["lateralMode"])}>
           <option value="both">Tilt or turn head</option>
-          <option value="tilt">Tilt head (ear to shoulder)</option>
+          <option value="tilt">Tilt head (recommended)</option>
           <option value="turn">Turn head (look sideways)</option>
         </select>
       </label>

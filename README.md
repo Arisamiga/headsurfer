@@ -50,3 +50,12 @@ src/
 ```
 
 All characters, environments, UI and sounds are original. As the concept's IP note requires, nothing is taken from Subway Surfers.
+
+## Recommended head controls
+
+- Move left/right: slowly tilt your head left/right (tilt-only is the default).
+- Jump: lift your chin / look slightly upward.
+- Roll / duck: lower your chin toward your chest.
+- Neutral / rest: return your head to centre before the next action.
+
+Use small, gentle movements within a comfortable range; never force a stretch. These are game controls, not a therapeutic exercise programme. Existing saved control preferences are preserved, and alternate lane controls remain available in Settings.
