@@ -1,6 +1,6 @@
 import type { LateralMode } from "../tracking/gestureEngine";
 import type { RunStats } from "../game/world";
-import { dailyChallenges, dayKey, insertLeaderboard, metricValue, type LeaderboardEntry } from "./progression";
+import { CHARACTERS, dailyChallenges, dayKey, insertLeaderboard, metricValue, type LeaderboardEntry } from "./progression";
 
 export interface Settings {
   sensitivity: number;
@@ -42,8 +42,8 @@ const DEFAULT_PROFILE: Profile = {
   wallet: 0,
   bestScore: 0,
   runs: 0,
-  owned: ["classic"],
-  outfit: "classic",
+  owned: CHARACTERS.map((character) => character.id),
+  outfit: "konrad",
   challengeDay: "",
   challengeProgress: {},
   claimed: [],
@@ -73,7 +73,10 @@ export const loadSettings = () => read(KEYS.settings, DEFAULT_SETTINGS);
 export const saveSettings = (s: Settings) => write(KEYS.settings, s);
 
 export function loadProfile(): Profile {
-  const profile = read(KEYS.profile, DEFAULT_PROFILE);
+  const saved = read(KEYS.profile, DEFAULT_PROFILE);
+  const profile = CHARACTERS.some((character) => character.id === saved.outfit)
+    ? saved
+    : { ...saved, outfit: "konrad", owned: CHARACTERS.map((character) => character.id) };
   const today = dayKey();
   if (profile.challengeDay !== today) {
     return { ...profile, challengeDay: today, challengeProgress: {}, claimed: [] };
