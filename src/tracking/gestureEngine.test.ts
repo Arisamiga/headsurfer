@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GestureEngine } from "./gestureEngine";
+import { DEFAULT_SETTINGS } from "../meta/storage";
 import type { HeadPose } from "./headPose";
 
 const neutral: HeadPose = { rollDeg: 2, yaw: 0.02, pitch: -0.01 };
@@ -27,6 +28,27 @@ function feed(engine: GestureEngine, pose: HeadPose, frames: number, start: numb
 }
 
 describe("GestureEngine", () => {
+  it("defaults to tilt-only lane controls in both the engine and settings", () => {
+    expect(new GestureEngine().config.lateralMode).toBe("tilt");
+    expect(DEFAULT_SETTINGS.lateralMode).toBe("tilt");
+    expect(feed(calibrated(), offset({ yaw: 0.3 }), 10, 1000)).toEqual([]);
+  });
+
+  it("accepts a slow tilt once and rearms after returning to centre", () => {
+    const engine = calibrated();
+    const fired = [];
+    for (let degrees = 0; degrees <= 20; degrees++) {
+      const action = engine.update(offset({ rollDeg: degrees }), 1000 + degrees * 100);
+      if (action) fired.push(action);
+    }
+    expect(fired).toEqual(["left"]);
+    expect(feed(engine, offset({ rollDeg: 20 }), 30, 3100)).toEqual([]);
+    feed(engine, neutral, 4, 4200);
+    expect(engine.signals.neutral).toBe(true);
+    expect(engine.signals.armed).toBe(true);
+    expect(feed(engine, offset({ rollDeg: -20 }), 6, 4600)).toEqual(["right"]);
+  });
+
   it("ignores small movements inside the deadband", () => {
     const engine = calibrated();
     expect(feed(engine, offset({ rollDeg: 5, pitch: 0.02 }), 30, 1000)).toEqual([]);
@@ -46,7 +68,6 @@ describe("GestureEngine", () => {
     expect(run(offset({ rollDeg: -20 }))).toEqual(["right"]);
     expect(run(offset({ pitch: 0.12 }))).toEqual(["jump"]);
     expect(run(offset({ pitch: -0.12 }))).toEqual(["roll"]);
-    expect(run(offset({ yaw: 0.2 }))).toEqual(["left"]);
   });
 
   it("fires once per gesture and needs a return to neutral", () => {
@@ -79,6 +100,8 @@ describe("GestureEngine", () => {
   });
 
   it("respects lateral mode and vertical inversion", () => {
+    expect(feed(calibrated({ lateralMode: "both" }), offset({ yaw: 0.2 }), 10, 1000)).toEqual(["left"]);
+    expect(feed(calibrated({ lateralMode: "turn" }), offset({ yaw: -0.2 }), 10, 1000)).toEqual(["right"]);
     expect(feed(calibrated({ lateralMode: "tilt" }), offset({ yaw: 0.3 }), 10, 1000)).toEqual([]);
     expect(feed(calibrated({ lateralMode: "turn" }), offset({ rollDeg: 30 }), 10, 1000)).toEqual([]);
     expect(feed(calibrated({ invertVertical: true }), offset({ pitch: 0.12 }), 10, 1000)).toEqual(["roll"]);

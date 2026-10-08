@@ -28,7 +28,7 @@ export interface Profile {
 
 export const DEFAULT_SETTINGS: Settings = {
   sensitivity: 1,
-  lateralMode: "both",
+  lateralMode: "tilt",
   invertVertical: false,
   mirror: true,
   showLandmarks: false,
