@@ -5,6 +5,7 @@ export interface Character {
   id: "konrad" | "aris" | "raj" | "alex";
   name: string;
   description: string;
+  playerModel: "procedural" | "raj";
   /** Multiplies the supplied GLB's PBR albedo; Konrad retains the original texture. */
   tint: number;
   card: { skin: number; shirt: number; trim: number };
@@ -12,10 +13,10 @@ export interface Character {
 
 /** The supplied Mixamo rig is shared until distinct character scans are available. */
 export const CHARACTERS: Character[] = [
-  { id: "konrad", name: "Konrad", description: "Current runner", tint: 0xffffff, card: { skin: 0xf0c7a7, shirt: 0x2f5fad, trim: 0xffc82e } },
-  { id: "aris", name: "Aris", description: "Cobalt route", tint: 0xbcd7ff, card: { skin: 0xd8a179, shirt: 0x3c6ee8, trim: 0xff8f24 } },
-  { id: "raj", name: "Raj", description: "Sunset route", tint: 0xffd1a6, card: { skin: 0x9a5e3d, shirt: 0xe45a32, trim: 0x45245f } },
-  { id: "alex", name: "Alex", description: "Night route", tint: 0xc9ddff, card: { skin: 0xb67f5d, shirt: 0x25324d, trim: 0x35c5be } },
+  { id: "konrad", name: "Konrad", description: "Current runner", playerModel: "procedural", tint: 0xffffff, card: { skin: 0xf0c7a7, shirt: 0x2f5fad, trim: 0xffc82e } },
+  { id: "aris", name: "Aris", description: "Cobalt route", playerModel: "procedural", tint: 0xbcd7ff, card: { skin: 0xd8a179, shirt: 0x3c6ee8, trim: 0xff8f24 } },
+  { id: "raj", name: "Raj", description: "Rigged 3D main character", playerModel: "raj", tint: 0xffffff, card: { skin: 0x9a5e3d, shirt: 0xe45a32, trim: 0x45245f } },
+  { id: "alex", name: "Alex", description: "Night route", playerModel: "procedural", tint: 0xc9ddff, card: { skin: 0xb67f5d, shirt: 0x25324d, trim: 0x35c5be } },
 ];
 
 export type ChallengeMetric = "coins" | "jumps" | "rolls" | "distance" | "nearMisses" | "maxCombo" | "laneChanges";

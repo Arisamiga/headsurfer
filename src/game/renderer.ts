@@ -13,7 +13,7 @@ const MODEL_WIDTH = 2.08;
 // The generated canopy reads as a block on the line at gameplay distances.
 const SHOW_STATION_CANOPY: boolean = false;
 const modelUrl = (name: string) => `${import.meta.env.BASE_URL}assets/models/${name}.glb`;
-const characterAssetUrl = () => `${import.meta.env.BASE_URL}assets/characters/konrad.glb`;
+const rajAssetUrl = () => `${import.meta.env.BASE_URL}assets/characters/raj.glb`;
 
 type FacadeKey = "palazzo" | "naples";
 type ModelKey = FacadeKey | "station" | "silverTrain" | "terracottaTrain" | "fedora" | "trenchcoat" | "floral";
@@ -261,7 +261,7 @@ export class GameRenderer {
     this.createCoinInstances();
     this.player = this.createPlayer();
     this.scene.add(this.player.root);
-    this.loadCharacterAsset();
+    this.loadRajCharacterAsset();
     this.camera.position.set(0, 4.4, 7.2);
     this.resize();
     // Missing model files are an expected optional-asset path; procedural
@@ -750,22 +750,35 @@ export class GameRenderer {
 
   setCharacter(character: Character) {
     this.selectedCharacter = character;
+    const showRaj = character.playerModel === "raj" && this.player.mixer !== null;
+    this.player.avatar.visible = showRaj;
+    this.player.body.visible = !showRaj;
+    if (!showRaj) return;
     const tint = new THREE.Color(character.tint);
     for (const entry of this.player.avatarMaterials) entry.material.color.copy(entry.baseColor).multiply(tint);
   }
 
-  /** Loads the supplied skinned GLB once; the primitive runner remains visible on load failure. */
-  private loadCharacterAsset() {
-    new GLTFLoader().load(
-      characterAssetUrl(),
+  /** Preloads Raj's skinned GLB; it becomes visible only after the player selects Raj. */
+  private loadRajCharacterAsset() {
+    this.modelLoader.load(
+      rajAssetUrl(),
       (gltf) => {
         if (this.disposed) {
           this.disposeAvatar(gltf.scene);
           return;
         }
         const rig = this.player;
-        gltf.scene.name = "Konrad_Mixamo_Rig";
-        gltf.scene.scale.setScalar(1.18);
+        gltf.scene.name = "Raj_Mixamo_Rig";
+        gltf.scene.updateMatrixWorld(true);
+        const bounds = new THREE.Box3().setFromObject(gltf.scene);
+        const height = bounds.getSize(new THREE.Vector3()).y;
+        if (!Number.isFinite(height) || height < 0.0001) {
+          this.disposeAvatar(gltf.scene);
+          return;
+        }
+        gltf.scene.scale.setScalar(1.9 / height);
+        gltf.scene.updateMatrixWorld(true);
+        gltf.scene.position.y -= new THREE.Box3().setFromObject(gltf.scene).min.y;
         gltf.scene.traverse((object) => {
           if (!(object instanceof THREE.Mesh)) return;
           object.castShadow = false;
@@ -778,8 +791,6 @@ export class GameRenderer {
           }
         });
         rig.avatar.add(gltf.scene);
-        rig.avatar.visible = true;
-        rig.body.visible = false;
         rig.mixer = new THREE.AnimationMixer(gltf.scene);
         const actionFor = (name: string) => {
           const clip = gltf.animations.find((candidate) => candidate.name === name);
@@ -794,7 +805,7 @@ export class GameRenderer {
       },
       undefined,
       () => {
-        // The primitive runner remains available when the optional model request fails.
+        // The procedural runner remains available when the optional model request fails.
       },
     );
   }
