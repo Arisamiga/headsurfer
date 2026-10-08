@@ -3,17 +3,18 @@ import { LANE_WIDTH } from "./config";
 import type { Obstacle, Pickup, World } from "./world";
 import type { Outfit } from "../meta/progression";
 
-const SKY = 0x8fd3ff;
+const SKY = 0x8fc9d9;
 const TRACK_LENGTH = 420;
 const SLEEPER_SPACING = 2;
 const COIN_CAPACITY = 256;
+const assetUrl = (name: string) => `${import.meta.env.BASE_URL}assets/runtime/${name}`;
+
+type FacadeKey = "palazzo" | "naples";
 const MAX_POOLED_OBSTACLES = 64;
 const MAX_POOLED_PER_OBSTACLE_VARIANT = 3;
 const MAX_POOLED_POWERS = 12;
 const MAX_POOLED_PER_POWER_KIND = 3;
 
-const TOY_COLORS = [0x4285f4, 0xea4335, 0xfbbc05, 0x34a853] as const;
-const HOUSE_COLORS = [0xffffff, 0xffeee7, 0xe8f3ff, 0xfff6d8, 0xe9f7e9] as const;
 
 function canvasTexture(width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void) {
   const canvas = document.createElement("canvas");
@@ -71,6 +72,7 @@ interface TownHouse {
   wallIndex: number;
   roofIndex: number;
   windowIndex: number;
+  facade: THREE.Mesh;
 }
 
 interface ParkTree {
@@ -78,6 +80,31 @@ interface ParkTree {
   x: number;
   scale: number;
   index: number;
+}
+
+interface RailProp {
+  root: THREE.Group;
+  s: number;
+}
+
+interface Pursuer {
+  sprite: THREE.Sprite;
+  lane: number;
+  phase: number;
+}
+
+interface ArtTextures {
+  facades: Record<FacadeKey, THREE.Texture>;
+  station: THREE.Texture;
+  trains: THREE.Texture[];
+  pursuers: THREE.Texture[];
+}
+
+interface ArtMaterials {
+  facades: Record<FacadeKey, THREE.MeshBasicMaterial>;
+  station: THREE.SpriteMaterial;
+  trains: THREE.SpriteMaterial[];
+  pursuers: THREE.SpriteMaterial[];
 }
 
 /** Renders a World snapshot. Holds no game state of its own beyond animation. */
@@ -91,6 +118,8 @@ export class GameRenderer {
   private res = this.createResources();
   private trackTexture!: THREE.Texture;
   private groundTexture!: THREE.Texture;
+  private art!: ArtTextures;
+  private artMaterials!: ArtMaterials;
   private player!: PlayerRig;
   private coinMesh!: THREE.InstancedMesh;
   private readonly instanceDummy = new THREE.Object3D();
@@ -104,6 +133,9 @@ export class GameRenderer {
   private treeCanopies!: THREE.InstancedMesh;
   private buildingSpan = 0;
   private treeSpan = 0;
+  private railProps: RailProp[] = [];
+  private railSpan = 0;
+  private pursuers: Pursuer[] = [];
   private obstacleActive = new Map<number, ActiveVisual>();
   private powerActive = new Map<number, ActiveVisual>();
   private obstaclePool = new Map<string, THREE.Object3D[]>();
@@ -125,11 +157,13 @@ export class GameRenderer {
 
     this.scene.background = new THREE.Color(SKY);
     this.scene.fog = new THREE.Fog(SKY, 68, 185);
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x679d52, 1.8));
-    const sun = new THREE.DirectionalLight(0xfff0c9, 2.1);
-    sun.position.set(-8, 15, 6);
+    this.scene.add(new THREE.HemisphereLight(0xfff4dc, 0x4f493d, 1.7));
+    const sun = new THREE.DirectionalLight(0xffe2ae, 2.1);
+    sun.position.set(-18, 20, 10);
     this.scene.add(sun);
 
+    this.art = this.loadArtTextures();
+    this.artMaterials = this.createArtMaterials();
     this.trackTexture = this.ownTexture(this.createTrackTexture());
     const track = new THREE.Mesh(
       this.ownGeometry(new THREE.PlaneGeometry(LANE_WIDTH * 3 + 0.8, TRACK_LENGTH)),
@@ -139,17 +173,28 @@ export class GameRenderer {
     track.position.z = -TRACK_LENGTH / 2 + 25;
     this.scene.add(track);
 
-    this.groundTexture = this.ownTexture(canvasTexture(64, 64, (ctx) => {
-      ctx.fillStyle = "#9fd67f";
-      ctx.fillRect(0, 0, 64, 64);
-      ctx.fillStyle = "#87c96b";
-      for (let i = 0; i < 28; i++) {
-        const x = (i * 19 + 7) % 64;
-        const y = (i * 29 + 11) % 64;
-        ctx.fillRect(x, y, 2, 4);
+    this.groundTexture = this.ownTexture(canvasTexture(96, 96, (ctx) => {
+      ctx.fillStyle = "#c5a270";
+      ctx.fillRect(0, 0, 96, 96);
+      ctx.strokeStyle = "rgba(94, 67, 43, 0.38)";
+      ctx.lineWidth = 1;
+      for (let y = 0; y <= 96; y += 16) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(96, y);
+        ctx.stroke();
       }
-      ctx.fillStyle = "rgba(255,255,230,0.55)";
-      for (let i = 0; i < 10; i++) ctx.fillRect((i * 23 + 4) % 64, (i * 13 + 9) % 64, 2, 2);
+      for (let row = 0; row < 6; row++) {
+        const offset = row % 2 ? 8 : 0;
+        for (let x = offset; x <= 96; x += 16) {
+          ctx.beginPath();
+          ctx.moveTo(x, row * 16);
+          ctx.lineTo(x, row * 16 + 16);
+          ctx.stroke();
+        }
+      }
+      ctx.fillStyle = "rgba(116, 81, 48, 0.2)";
+      for (let i = 0; i < 42; i++) ctx.fillRect((i * 31 + 5) % 96, (i * 17 + 11) % 96, 1, 1);
     }));
     this.groundTexture.wrapS = this.groundTexture.wrapT = THREE.RepeatWrapping;
     this.groundTexture.repeat.set(10, TRACK_LENGTH / 8);
@@ -161,7 +206,10 @@ export class GameRenderer {
     ground.position.set(0, -0.025, -TRACK_LENGTH / 2 + 25);
     this.scene.add(ground);
 
+    this.createRails();
     this.createScenery();
+    this.createRailwayProps();
+    this.createPursuers();
     this.createSkyProps();
     this.createCoinInstances();
     this.player = this.createPlayer();
@@ -185,6 +233,55 @@ export class GameRenderer {
     return texture;
   }
 
+  private loadTexture(file: string) {
+    const texture = this.ownTexture(new THREE.TextureLoader().load(assetUrl(file)));
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    return texture;
+  }
+
+  private loadArtTextures(): ArtTextures {
+    return {
+      facades: {
+        palazzo: this.loadTexture("travertine-palazzo.webp"),
+        naples: this.loadTexture("naples-balcony-house.webp"),
+      },
+      station: this.loadTexture("volcanic-station-canopy.webp"),
+      trains: [this.loadTexture("silver-metro-car.webp"), this.loadTexture("terracotta-commuter-car.webp")],
+      pursuers: [
+        this.loadTexture("fedora-pursuer.webp"),
+        this.loadTexture("trenchcoat-pursuer.webp"),
+        this.loadTexture("floral-pursuer.webp"),
+      ],
+    };
+  }
+
+  private createArtMaterials(): ArtMaterials {
+    const facade = (map: THREE.Texture) => this.ownMaterial(new THREE.MeshBasicMaterial({
+      map,
+      transparent: true,
+      alphaTest: 0.04,
+      side: THREE.DoubleSide,
+    }));
+    const sprite = (map: THREE.Texture) => this.ownMaterial(new THREE.SpriteMaterial({
+      map,
+      transparent: true,
+      alphaTest: 0.04,
+      depthWrite: false,
+    }));
+    return {
+      facades: {
+        palazzo: facade(this.art.facades.palazzo),
+        naples: facade(this.art.facades.naples),
+      },
+      station: sprite(this.art.station),
+      trains: this.art.trains.map(sprite),
+      pursuers: this.art.pursuers.map(sprite),
+    };
+  }
+
   private createResources() {
     const std = (color: number, extra: THREE.MeshStandardMaterialParameters = {}) =>
       this.ownMaterial(new THREE.MeshStandardMaterial({ color, roughness: 0.6, ...extra }));
@@ -203,12 +300,13 @@ export class GameRenderer {
       coinMat: std(0xfbbc05, { metalness: 0.45, roughness: 0.3, emissive: 0x8a5b00, emissiveIntensity: 0.25 }),
       barrierMat: this.ownMaterial(new THREE.MeshStandardMaterial({ map: barrierStripeTexture, roughness: 0.55 })),
       gateMat: this.ownMaterial(new THREE.MeshStandardMaterial({ map: gateStripeTexture, roughness: 0.55 })),
-      postMat: std(0x2765b7),
-      trainColors: TOY_COLORS.map((color) => std(color, { roughness: 0.55 })),
-      movingMat: std(0xea4335),
+      postMat: std(0x37403f, { metalness: 0.65, roughness: 0.35 }),
+      trainColors: [0x2f7771, 0xb6583c, 0x4c5e79, 0x8b6b46].map((color) => std(color, { roughness: 0.55 })),
+      movingMat: std(0xb64536),
       windowMat: this.ownMaterial(new THREE.MeshStandardMaterial({ map: windowTexture, emissive: 0x3d7ba6, emissiveIntensity: 0.25, roughness: 0.4 })),
-      lightMat: this.ownMaterial(new THREE.MeshBasicMaterial({ color: 0xfff6a0 })),
-      roofMat: std(0xffffff),
+      lightMat: this.ownMaterial(new THREE.MeshBasicMaterial({ color: 0xffdc88 })),
+      roofMat: std(0xd9cbb1, { roughness: 0.75 }),
+      railMat: std(0x414847, { metalness: 0.8, roughness: 0.32 }),
       powerMats: {
         multiplier: std(0x34a853, { emissive: 0x0b6b2a, emissiveIntensity: 0.6 }),
         magnet: std(0xea4335, { emissive: 0x6b0b1a, emissiveIntensity: 0.6 }),
@@ -228,39 +326,44 @@ export class GameRenderer {
     const lanePx = 96;
     const width = lanePx * 3 + 32;
     const texture = canvasTexture(width, 64, (ctx) => {
-      ctx.fillStyle = "#e6d6b7";
+      ctx.fillStyle = "#8b7864";
       ctx.fillRect(0, 0, width, 64);
-      const laneTints = ["#fff8e7", "#f7fbef", "#fff7e9"];
       for (let lane = 0; lane < 3; lane++) {
         const x = 16 + lane * lanePx;
-        ctx.fillStyle = laneTints[lane];
+        ctx.fillStyle = "#4c4338";
         ctx.fillRect(x, 0, lanePx, 64);
-        // Small painted pavers keep the paper path playful without competing with obstacles.
-        ctx.fillStyle = lane === 1 ? "rgba(52,168,83,0.11)" : "rgba(251,188,5,0.13)";
-        for (let y = 6 + lane * 3; y < 64; y += 24) ctx.fillRect(x + lanePx / 2 - 11, y, 22, 5);
+        ctx.fillStyle = "#aa9270";
+        for (let y = 2; y < 64; y += 16) ctx.fillRect(x + 8, y, lanePx - 16, 4);
+        ctx.fillStyle = "#c5c8c0";
+        ctx.fillRect(x + 22, 0, 5, 64);
+        ctx.fillRect(x + lanePx - 27, 0, 5, 64);
+        ctx.fillStyle = "#6d6458";
+        ctx.fillRect(x + 30, 0, lanePx - 60, 64);
       }
-      ctx.fillStyle = "#dcead1";
-      for (let lane = 1; lane < 3; lane++) ctx.fillRect(16 + lane * lanePx - 2, 0, 4, 64);
-      ctx.fillStyle = "rgba(66,133,244,0.28)";
-      for (let y = 4; y < 64; y += 18) {
-        ctx.fillRect(17, y, 4, 9);
-        ctx.fillRect(width - 21, y, 4, 9);
-      }
-      ctx.fillStyle = "rgba(234,67,53,0.18)";
-      ctx.fillRect(12, 0, 4, 64);
-      ctx.fillRect(width - 16, 0, 4, 64);
     });
     texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
     texture.repeat.set(1, TRACK_LENGTH / SLEEPER_SPACING);
     return texture;
   }
 
+  private createRails() {
+    const railGeo = this.ownGeometry(new THREE.BoxGeometry(0.055, 0.075, TRACK_LENGTH));
+    for (const lane of [-1, 0, 1]) {
+      for (const offset of [-0.56, 0.56]) {
+        const rail = new THREE.Mesh(railGeo, this.res.railMat);
+        rail.position.set(lane * LANE_WIDTH + offset, 0.055, -TRACK_LENGTH / 2 + 25);
+        this.scene.add(rail);
+      }
+    }
+  }
+
   private createScenery() {
     const houseCountPerSide = 20;
     const houseCount = houseCountPerSide * 2;
-    const wallMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82 }));
-    const roofMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0xea4335, roughness: 0.65 }));
-    const windowMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0x6aa8f7, emissive: 0x235eaa, emissiveIntensity: 0.2, roughness: 0.35 }));
+    const wallMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0xc5ab87, roughness: 0.9 }));
+    const roofMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0xb85d3f, roughness: 0.72 }));
+    const windowMat = this.ownMaterial(new THREE.MeshStandardMaterial({ color: 0x243b52, emissive: 0x10202d, emissiveIntensity: 0.25, roughness: 0.35 }));
+    const facadeGeo = this.ownGeometry(new THREE.PlaneGeometry(1, 1));
     this.houseWalls = new THREE.InstancedMesh(this.res.box, wallMat, houseCount);
     this.houseRoofs = new THREE.InstancedMesh(this.ownGeometry(new THREE.ConeGeometry(1, 1, 4)), roofMat, houseCount);
     this.houseWindows = new THREE.InstancedMesh(this.ownGeometry(new THREE.BoxGeometry(1, 1, 0.06)), windowMat, houseCount * 2);
@@ -279,9 +382,13 @@ export class GameRenderer {
         const depth = 4.8 + (i % 3) * 0.5;
         const s = i * spacing + (side > 0 ? spacing / 2 : 0);
         const x = side * (LANE_WIDTH * 1.5 + 4 + width / 2);
-        this.houses.push({ s, x, width, height, depth, wallIndex: houseIndex, roofIndex: houseIndex, windowIndex: houseIndex * 2 });
-        this.houseWalls.setColorAt(houseIndex, new THREE.Color(HOUSE_COLORS[(i + (side > 0 ? 2 : 0)) % HOUSE_COLORS.length]));
-        this.houseRoofs.setColorAt(houseIndex, new THREE.Color(TOY_COLORS[(i + (side > 0 ? 1 : 0)) % TOY_COLORS.length]));
+        const facadeKey: FacadeKey = (i + (side > 0 ? 1 : 0)) % 3 === 0 ? "naples" : "palazzo";
+        const facade = new THREE.Mesh(facadeGeo, this.artMaterials.facades[facadeKey]);
+        facade.renderOrder = 1;
+        this.scene.add(facade);
+        this.houses.push({ s, x, width, height, depth, wallIndex: houseIndex, roofIndex: houseIndex, windowIndex: houseIndex * 2, facade });
+        this.houseWalls.setColorAt(houseIndex, new THREE.Color([0xc6ad89, 0xd6b88c, 0xb98f74, 0xd5a36f][(i + (side > 0 ? 2 : 0)) % 4]));
+        this.houseRoofs.setColorAt(houseIndex, new THREE.Color([0xb85d3f, 0xa94d36, 0xc6754e][(i + (side > 0 ? 1 : 0)) % 3]));
         houseIndex++;
       }
     }
@@ -308,6 +415,50 @@ export class GameRenderer {
       }
     }
     this.updateScenery(0);
+  }
+
+  private createRailwayProps() {
+    const count = 18;
+    const spacing = 18;
+    this.railSpan = count * spacing;
+    for (let i = 0; i < count; i++) {
+      const root = new THREE.Group();
+      for (const side of [-1, 1]) {
+        const post = new THREE.Mesh(this.res.box, this.res.postMat);
+        post.scale.set(0.18, 5.1, 0.18);
+        post.position.set(side * 5.4, 2.55, 0);
+        root.add(post);
+        const foot = new THREE.Mesh(this.res.box, this.res.roofMat);
+        foot.scale.set(0.7, 0.18, 0.7);
+        foot.position.set(side * 5.4, 0.09, 0);
+        root.add(foot);
+      }
+      const beam = new THREE.Mesh(this.res.box, this.res.postMat);
+      beam.scale.set(11.1, 0.14, 0.14);
+      beam.position.y = 4.85;
+      root.add(beam);
+      const wire = new THREE.Mesh(this.res.box, this.res.railMat);
+      wire.scale.set(8.2, 0.035, 0.035);
+      wire.position.y = 4.42;
+      root.add(wire);
+      if (i % 4 === 1) {
+        const station = new THREE.Sprite(this.artMaterials.station);
+        station.scale.set(5.5, 4.1, 1);
+        station.position.set(i % 8 === 1 ? -7.2 : 7.2, 2.0, 0.2);
+        root.add(station);
+      }
+      this.scene.add(root);
+      this.railProps.push({ root, s: i * spacing + 7 });
+    }
+  }
+
+  private createPursuers() {
+    this.artMaterials.pursuers.forEach((material, index) => {
+      const sprite = new THREE.Sprite(material);
+      sprite.scale.set(2.2, 3.0, 1);
+      this.scene.add(sprite);
+      this.pursuers.push({ sprite, lane: index - 1, phase: index * 1.8 });
+    });
   }
 
   private createSkyProps() {
@@ -451,6 +602,10 @@ export class GameRenderer {
       const windowZ = z + house.depth / 2 + 0.04;
       this.setInstance(this.houseWindows, house.windowIndex, house.x - house.width * 0.23, house.height * 0.56, windowZ, 0.48, 0.72, 1);
       this.setInstance(this.houseWindows, house.windowIndex + 1, house.x + house.width * 0.23, house.height * 0.56, windowZ, 0.48, 0.72, 1);
+      const side = Math.sign(house.x);
+      house.facade.position.set(house.x - side * (house.width / 2 + 0.025), house.height * 0.51, z);
+      house.facade.rotation.set(0, side > 0 ? -Math.PI / 2 : Math.PI / 2, 0);
+      house.facade.scale.set(house.depth * 0.97, house.height * 1.02, 1);
     }
     this.houseWalls.instanceMatrix.needsUpdate = true;
     this.houseRoofs.instanceMatrix.needsUpdate = true;
@@ -464,6 +619,23 @@ export class GameRenderer {
     }
     this.treeTrunks.instanceMatrix.needsUpdate = true;
     this.treeCanopies.instanceMatrix.needsUpdate = true;
+
+    for (const prop of this.railProps) {
+      while (prop.s - travelled < -25) prop.s += this.railSpan;
+      prop.root.position.z = -(prop.s - travelled);
+    }
+  }
+
+  private updatePursuers(time: number, crashed: boolean) {
+    this.pursuers.forEach((pursuer, index) => {
+      const stride = this.reducedMotion ? 0 : Math.sin(time * 7 + pursuer.phase);
+      const sway = this.reducedMotion ? 0 : Math.sin(time * 1.6 + pursuer.phase) * 0.18;
+      const depth = 34 + index * 9 + (this.reducedMotion ? 0 : Math.sin(time * 0.8 + pursuer.phase) * 2);
+      pursuer.sprite.position.set(pursuer.lane * LANE_WIDTH + sway, 1.32 + Math.abs(stride) * 0.08, -depth);
+      pursuer.sprite.scale.set(2.15 + index * 0.06, 2.95 + index * 0.06, 1);
+      pursuer.sprite.material.rotation = this.reducedMotion ? 0 : stride * 0.025;
+      pursuer.sprite.visible = !crashed;
+    });
   }
 
   private setInstance(mesh: THREE.InstancedMesh, index: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, rotationY = 0) {
@@ -477,9 +649,10 @@ export class GameRenderer {
   private obstacleKey(obstacle: Obstacle) {
     if (obstacle.kind === "barrier" || obstacle.kind === "gate") return obstacle.kind;
     const colorIndex = obstacle.kind === "moving" ? 0 : obstacle.id % this.res.trainColors.length;
-    // Pool long vehicles by a half-unit base length, then scale to the exact world length.
+    const liveryIndex = obstacle.id % this.artMaterials.trains.length;
+    // Pool long vehicles by livery and half-unit base length, then scale to the exact world length.
     const lengthBucket = Math.max(0.5, Math.round(obstacle.length * 2) / 2);
-    return `${obstacle.kind}:${colorIndex}:${lengthBucket.toFixed(1)}`;
+    return `${obstacle.kind}:${colorIndex}:${liveryIndex}:${lengthBucket.toFixed(1)}`;
   }
 
   private makeObstacle(obstacle: Obstacle, key: string): THREE.Object3D {
@@ -500,7 +673,9 @@ export class GameRenderer {
       add(r.postMat, 0.18, 2.6, 0.18, 1.0, 1.3, 0);
       add(r.gateMat, 2.2, 0.9, 0.2, 0, 1.85, 0);
     } else {
-      const length = Number(key.split(":")[2]);
+      const [, , liveryKey, lengthKey] = key.split(":");
+      const length = Number(lengthKey);
+      const liveryIndex = Number(liveryKey);
       const moving = obstacle.kind === "moving";
       const colorIndex = moving ? 0 : obstacle.id % r.trainColors.length;
       const mat = moving ? r.movingMat : r.trainColors[colorIndex];
@@ -510,6 +685,10 @@ export class GameRenderer {
       add(r.windowMat, 1.5, 0.8, 0.05, 0, 1.9, 0.01);
       add(r.lightMat, 0.3, 0.2, 0.05, -0.65, 0.7, 0.02);
       add(r.lightMat, 0.3, 0.2, 0.05, 0.65, 0.7, 0.02);
+      const livery = new THREE.Sprite(this.artMaterials.trains[liveryIndex]);
+      livery.scale.set(4.1, 3.15, 1);
+      livery.position.set(0, 1.55, 0.08);
+      group.add(livery);
       group.userData.baseLength = length;
     }
     group.userData.poolKey = key;
@@ -665,6 +844,7 @@ export class GameRenderer {
       // span on restart so a long previous run cannot leave an empty town.
       for (const house of this.houses) house.s %= this.buildingSpan;
       for (const tree of this.trees) tree.s %= this.treeSpan;
+      for (const prop of this.railProps) prop.s %= this.railSpan;
     }
     this.syncEpoch++;
     if (this.syncEpoch === Number.MAX_SAFE_INTEGER) this.syncEpoch = 1;
@@ -676,6 +856,7 @@ export class GameRenderer {
     this.trackTexture.offset.y = travelled / SLEEPER_SPACING;
     this.groundTexture.offset.y = travelled / 8;
     this.updateScenery(travelled);
+    this.updatePursuers(t, crashed);
 
     this.syncObstacles(world.obstacles, p.s, this.syncEpoch);
     this.syncPowers(world.pickups, p.s, t, this.syncEpoch);

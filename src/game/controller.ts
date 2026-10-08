@@ -74,6 +74,7 @@ export class GameController {
   }
 
   newRun(seed = Math.floor(Math.random() * 2 ** 31)) {
+    this.sfx.stopMusic();
     this.world = new World(seed);
     this.mode = "paused";
     this.emitHud();
@@ -81,12 +82,16 @@ export class GameController {
 
   start() {
     this.sfx.unlock();
+    this.sfx.startMusic();
     this.mode = "running";
     this.last = performance.now();
   }
 
   pause() {
-    if (this.mode === "running") this.mode = "paused";
+    if (this.mode === "running") {
+      this.mode = "paused";
+      this.sfx.pauseMusic();
+    }
   }
 
   resume() {
@@ -94,6 +99,7 @@ export class GameController {
   }
 
   idle() {
+    this.sfx.stopMusic();
     this.mode = "idle";
     this.world = new World(1, { spawn: false });
   }
@@ -121,6 +127,7 @@ export class GameController {
       }
       if (this.world.status === "over" && this.mode === "running") {
         this.mode = "over";
+        this.sfx.stopMusic();
         this.emitHud();
         this.callbacks.onGameOver(this.world);
       }
@@ -152,6 +159,7 @@ export class GameController {
     cancelAnimationFrame(this.frame);
     this.resizeObserver.disconnect();
     document.removeEventListener("visibilitychange", this.onVisibilityChange);
+    this.sfx.dispose();
     this.renderer.dispose();
   }
 }

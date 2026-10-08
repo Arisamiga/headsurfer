@@ -20,11 +20,17 @@ npm run build              # static output in dist/
 
 ## Hackathon edition
 
-The original runner now has a light, Google Doodle-inspired four-color interface and an original low-poly toy town. There are no copied Google or Subway Surfers assets and no affiliation with either game/brand. Scores, daily challenges, outfits and coins stay on this device; coins have no monetary value.
+The original runner now has a light, Google Doodle-inspired four-color interface and an original Rome Rail Pursuit route. There are no copied Google or Subway Surfers assets and no affiliation with either game/brand. Scores, daily challenges, outfits and coins stay on this device; coins have no monetary value.
 
 Head tracking corrects landmark coordinates for camera aspect ratio, rejects unstable calibration, and requires two centered frames before rearming a fired gesture. MediaPipe loads only when head controls are enabled. Camera/model startup cancellation, failures and stalled frames are handled explicitly; leaving Play or switching to keyboard stops the webcam. Hide preview only hides the image—the power button actually turns the camera off.
 
 The renderer instances coins, houses and trees, pools obstacle/power-up meshes, caps pixel ratio at 1.5 and releases GPU resources on teardown. Hidden tabs and non-game pages suppress rendering/inference work. Settings includes reduced motion; camera-panel sensitivity can be tuned without leaving Play. These are engineering improvements, not a promise of a particular FPS or measured real-face accuracy.
+
+## Rome Rail Pursuit assets and audio
+
+The route uses the **Rome Rail Pursuit** pack documented in `public/assets/manifest/rome-rail-pursuit.json`. Its browser runtime uses optimized WebP art under `public/assets/runtime/`: travertine palazzi, painted Naples balcony houses, a volcanic-stone station canopy, two fictional unbranded city-train liveries, and three fictional retro crime-film pursuers. The renderer resolves these as `${import.meta.env.BASE_URL}assets/runtime/...`, layers the track-facing facades over the instanced town geometry, and disposes the owned textures and materials on teardown. Original PNG/GLB source assets remain in `asset-sources/rome-rail-pursuit/` for source preservation rather than runtime loading.
+
+The same pack provides `public/assets/audio/mediterranean-chase.mp3` plus lane-switch, jump, roll, coin, power-up, near-miss, and collision MP3 effects. BGM starts with a run, pauses with the run, and is stopped for a new run, idle state, or game-over; controller teardown disposes the sound system. The art and audio are original route assets with no external brand marks or textual signage.
 
 ## Production with Docker
 
