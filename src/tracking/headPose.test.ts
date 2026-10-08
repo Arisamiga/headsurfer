@@ -47,6 +47,30 @@ describe("estimateHeadPose", () => {
     expect(estimateHeadPose(face({ noseDy: 0.03 }))!.pitch).toBeLessThan(-0.07);
   });
 
+  it("uses the pixel aspect ratio before measuring pose", () => {
+    const physicalFace = face({ rollDeg: 18, noseDx: 0.03, noseDy: -0.02 });
+    // The same physical face in a 2:1 image has x coordinates normalised over
+    // twice as many pixels. Passing the aspect restores the original geometry.
+    const wideImage = physicalFace.map((point) => (point ? { ...point, x: point.x / 2 } : point));
+    const expected = estimateHeadPose(physicalFace)!;
+    const actual = estimateHeadPose(wideImage, 2)!;
+    expect(actual.rollDeg).toBeCloseTo(expected.rollDeg, 8);
+    expect(actual.yaw).toBeCloseTo(expected.yaw, 8);
+    expect(actual.pitch).toBeCloseTo(expected.pitch, 8);
+  });
+
+  it("rejects non-finite landmark coordinates and invalid aspect ratios", () => {
+    const nonFinite = face();
+    nonFinite[LANDMARK.noseTip] = { x: Number.NaN, y: 0.5 };
+    expect(estimateHeadPose(nonFinite)).toBeNull();
+
+    const infinite = face();
+    infinite[LANDMARK.leftCheek] = { x: Number.POSITIVE_INFINITY, y: 0.5 };
+    expect(estimateHeadPose(infinite)).toBeNull();
+    expect(estimateHeadPose(face(), 0)).toBeNull();
+    expect(estimateHeadPose(face(), Number.NaN)).toBeNull();
+  });
+
   it("returns null when landmarks are missing", () => {
     expect(estimateHeadPose([])).toBeNull();
   });

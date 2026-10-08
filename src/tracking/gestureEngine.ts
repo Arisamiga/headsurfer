@@ -47,6 +47,7 @@ export class GestureEngine {
   private calibrationSamples: HeadPose[] | null = null;
   private candidate: Action | null = null;
   private candidateFrames = 0;
+  private neutralFrames = 0;
   private lastFire = -Infinity;
   private armed = true;
   signals: GestureSignals = { lateral: 0, vertical: 0, neutral: true, armed: true };
@@ -62,6 +63,10 @@ export class GestureEngine {
 
   beginCalibration() {
     this.calibrationSamples = [];
+    this.smoothed = null;
+    this.candidate = null;
+    this.candidateFrames = 0;
+    this.neutralFrames = 0;
   }
 
   get isCalibrating() {
@@ -72,37 +77,60 @@ export class GestureEngine {
     return this.calibrationSamples?.length ?? 0;
   }
 
-  /** Finishes calibration using the median of collected samples. Returns false if too few. */
+  /**
+   * Finishes calibration from a stable cluster around the median. Isolated bad
+   * landmark frames are discarded, while a sample set that shows real movement
+   * is rejected instead of silently baking that motion into the neutral pose.
+   */
   finishCalibration(minSamples = 8): boolean {
     const samples = this.calibrationSamples;
     this.calibrationSamples = null;
-    if (!samples || samples.length < minSamples) return false;
-    const median = (values: number[]) => {
-      const sorted = [...values].sort((a, b) => a - b);
-      return sorted[Math.floor(sorted.length / 2)];
+    if (!samples || samples.length < minSamples) return this.rejectCalibration();
+
+    const medianPose = medianOfPoses(samples);
+    const limits = {
+      // A neutral collection may contain small natural sway, but should never
+      // contain a meaningful fraction of a game gesture.
+      rollDeg: Math.max(2, this.config.rollThresholdDeg * 0.35),
+      yaw: Math.max(0.015, this.config.yawThreshold * 0.35),
+      pitch: Math.max(0.012, this.config.pitchThreshold * 0.35),
     };
-    this.neutralPose = {
-      rollDeg: median(samples.map((s) => s.rollDeg)),
-      yaw: median(samples.map((s) => s.yaw)),
-      pitch: median(samples.map((s) => s.pitch)),
-    };
+    const inliers = samples.filter(
+      (sample) =>
+        Math.abs(sample.rollDeg - medianPose.rollDeg) <= limits.rollDeg &&
+        Math.abs(sample.yaw - medianPose.yaw) <= limits.yaw &&
+        Math.abs(sample.pitch - medianPose.pitch) <= limits.pitch,
+    );
+    // A median is robust to a few outliers. Requiring a clear majority of the
+    // original collection prevents a slow turn during calibration being treated
+    // as a valid baseline merely because its final frames form a small cluster.
+    const requiredInliers = Math.max(minSamples, Math.ceil(samples.length * 0.7));
+    if (inliers.length < requiredInliers) return this.rejectCalibration();
+
+    this.neutralPose = medianOfPoses(inliers);
     this.smoothed = { ...this.neutralPose };
     this.calibrated = true;
     this.armed = true;
     this.candidate = null;
     this.candidateFrames = 0;
+    this.neutralFrames = 0;
     return true;
   }
 
   /** Feed one tracking frame. Returns an action when a gesture is accepted. */
   update(pose: HeadPose | null, nowMs: number): Action | null {
-    if (!pose) {
+    if (!isFinitePose(pose)) {
+      // Do not blend a reappearing face with a pose captured before a camera
+      // stall or face loss. It can otherwise create a gesture from stale data.
+      this.smoothed = null;
       this.candidate = null;
       this.candidateFrames = 0;
+      this.neutralFrames = 0;
+      this.signals = { lateral: 0, vertical: 0, neutral: false, armed: this.armed };
       return null;
     }
     if (this.calibrationSamples) {
-      this.calibrationSamples.push(pose);
+      this.calibrationSamples.push({ ...pose });
       return null;
     }
 
@@ -125,7 +153,10 @@ export class GestureEngine {
     if (!Number.isFinite(vertical)) vertical = 0;
 
     const neutral = Math.abs(lateral) < deadband && Math.abs(vertical) < deadband;
-    if (neutral) this.armed = true;
+    this.neutralFrames = neutral ? this.neutralFrames + 1 : 0;
+    // A single frame close to centre is often just landmark wobble. A fired
+    // gesture is re-armed only after two consecutive neutral measurements.
+    if (!this.armed && this.neutralFrames >= 2) this.armed = true;
     this.signals = { lateral, vertical, neutral, armed: this.armed };
 
     let next: Action | null = null;
@@ -158,4 +189,30 @@ export class GestureEngine {
     }
     return null;
   }
+
+  private rejectCalibration(): false {
+    this.smoothed = null;
+    this.candidate = null;
+    this.candidateFrames = 0;
+    this.neutralFrames = 0;
+    return false;
+  }
+}
+
+function isFinitePose(pose: HeadPose | null): pose is HeadPose {
+  return pose !== null && Number.isFinite(pose.rollDeg) && Number.isFinite(pose.yaw) && Number.isFinite(pose.pitch);
+}
+
+function medianOfPoses(samples: HeadPose[]): HeadPose {
+  return {
+    rollDeg: median(samples.map((sample) => sample.rollDeg)),
+    yaw: median(samples.map((sample) => sample.yaw)),
+    pitch: median(samples.map((sample) => sample.pitch)),
+  };
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 }
