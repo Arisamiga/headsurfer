@@ -10,6 +10,7 @@ export interface Settings {
   showLandmarks: boolean;
   showCamera: boolean;
   sound: boolean;
+  reducedMotion: boolean;
   playerName: string;
 }
 
@@ -30,9 +31,10 @@ export const DEFAULT_SETTINGS: Settings = {
   lateralMode: "tilt",
   invertVertical: false,
   mirror: true,
-  showLandmarks: true,
+  showLandmarks: false,
   showCamera: true,
   sound: true,
+  reducedMotion: typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches,
   playerName: "",
 };
 

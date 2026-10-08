@@ -86,7 +86,9 @@ describe("GestureEngine", () => {
   it("applies a cooldown after each action", () => {
     const engine = calibrated({ holdFrames: 1, cooldownMs: 500 });
     expect(engine.update(offset({ rollDeg: 20 }), 1000)).toBe("left");
+    // A one-frame neutral wobble no longer rearms a fired gesture.
     engine.update(neutral, 1050);
+    expect(engine.update(neutral, 1083)).toBeNull();
     expect(engine.update(offset({ rollDeg: -20 }), 1100)).toBeNull();
     expect(engine.update(offset({ rollDeg: -20 }), 1600)).toBe("right");
   });
@@ -115,5 +117,43 @@ describe("GestureEngine", () => {
     engine.beginCalibration();
     engine.update(neutral, 0);
     expect(engine.finishCalibration()).toBe(false);
+  });
+
+  it("uses the stable median while discarding an isolated calibration outlier", () => {
+    const engine = new GestureEngine({ smoothing: 1 });
+    engine.beginCalibration();
+    for (let i = 0; i < 9; i++) engine.update(neutral, i * 33);
+    engine.update(offset({ rollDeg: 50, yaw: 0.5, pitch: 0.4 }), 330);
+    expect(engine.finishCalibration()).toBe(true);
+    expect(feed(engine, offset({ rollDeg: 20 }), 3, 1000)).toEqual(["left"]);
+  });
+
+  it("rejects calibration when the collected pose is moving rather than stable", () => {
+    const engine = new GestureEngine();
+    engine.beginCalibration();
+    for (let i = 0; i < 5; i++) engine.update(neutral, i * 33);
+    for (let i = 5; i < 10; i++) engine.update(offset({ rollDeg: 15 }), i * 33);
+    expect(engine.finishCalibration()).toBe(false);
+  });
+
+  it("requires two consecutive neutral frames before a fired gesture re-arms", () => {
+    const engine = calibrated({ holdFrames: 1, cooldownMs: 0 });
+    expect(engine.update(offset({ rollDeg: 20 }), 1000)).toBe("left");
+    expect(engine.update(neutral, 1033)).toBeNull();
+    // A new gesture after one neutral frame remains locked.
+    expect(engine.update(offset({ rollDeg: -20 }), 1066)).toBeNull();
+    expect(engine.update(neutral, 1099)).toBeNull();
+    expect(engine.update(neutral, 1132)).toBeNull();
+    expect(engine.update(offset({ rollDeg: -20 }), 1165)).toBe("right");
+  });
+
+  it("resets smoothing when the face sample becomes stale", () => {
+    const engine = calibrated({ smoothing: 0.5 });
+    engine.update(offset({ rollDeg: 40 }), 1000);
+    expect(engine.signals.neutral).toBe(false);
+    engine.update(null, 1033);
+    engine.update(neutral, 1066);
+    expect(engine.signals.lateral).toBe(0);
+    expect(engine.signals.neutral).toBe(true);
   });
 });

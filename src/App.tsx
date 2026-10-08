@@ -19,6 +19,7 @@ import { GestureGuide } from "./ui/GestureGuide";
 import { CameraPanel } from "./ui/CameraPanel";
 import { Hud } from "./ui/Hud";
 import { HowItWorksView, LeaderboardView, RewardsView, SettingsView } from "./ui/Views";
+import { Icon, Mascot } from "./ui/Icons";
 
 type View = "play" | "leaderboard" | "rewards" | "how" | "settings";
 type Phase = "menu" | "camera" | "calibrate" | "tutorial" | "countdown" | "running" | "paused" | "over";
@@ -43,7 +44,6 @@ const KEYMAP: Record<string, Action> = {
   ArrowDown: "roll",
   KeyS: "roll",
 };
-const ARROWS: Record<Action, string> = { left: "⬅", right: "➡", jump: "⬆", roll: "⬇" };
 
 const EMPTY_HUD: HudState = { score: 0, coins: 0, distance: 0, multiplier: 1, combo: 0, speed: 0, multiplierTime: 0, magnetTime: 0, shield: false };
 
@@ -90,6 +90,7 @@ export default function App() {
   const overAtRef = useRef(0);
   const runActiveRef = useRef(false);
   const popupId = useRef(0);
+  const cameraRequestRef = useRef(0);
 
   const setPhase = useCallback((p: Phase) => {
     phaseRef.current = p;
@@ -117,6 +118,7 @@ export default function App() {
     clearTimers();
     setPhase("countdown");
     setPause(null);
+    setCountdown(3);
     const sfx = controllerRef.current?.sfx;
     sfx?.unlock();
     [3, 2, 1].forEach((n, i) =>
@@ -172,6 +174,25 @@ export default function App() {
     },
     [setPause, setPhase],
   );
+
+  const stopCamera = useCallback(() => {
+    cameraRequestRef.current++;
+    trackerRef.current?.stop();
+    setTrackerActive(false);
+    setTrackerLoading(false);
+    setFaceFound(false);
+    faceRef.current.frames = 0;
+    faceRef.current.found = false;
+    inputModeRef.current = "keyboard";
+    setInputMode("keyboard");
+    if (phaseRef.current === "running" || phaseRef.current === "countdown") pause("user");
+    else if (["camera", "calibrate", "tutorial"].includes(phaseRef.current)) {
+      clearTimers();
+      runActiveRef.current = false;
+      controllerRef.current?.idle();
+      setPhase("menu");
+    }
+  }, [pause, setPhase]);
 
   const finishTutorial = useCallback(() => {
     const next = { ...stateRef.current.profile, tutorialDone: true };
@@ -234,14 +255,23 @@ export default function App() {
         setCalibration({ progress: Math.min(1, progress), message: "" });
         if (progress >= 1) {
           if (engine.finishCalibration()) afterCalibration();
-          else setCalibration({ progress: 0, message: "Hold still a little longer" });
+          else {
+            engine.beginCalibration();
+            face.calibStart = frame.time;
+            setCalibration({ progress: 0, message: "Let's try again. Keep your head still." });
+          }
         }
         return;
       }
 
       const action = engine.update(frame.pose, frame.time);
       if (current === "camera") {
-        if (face.frames >= 8) setPhase("calibrate");
+        if (face.frames >= 8) {
+          engine.beginCalibration();
+          face.calibStart = frame.time;
+          setCalibration({ progress: 0, message: "" });
+          setPhase("calibrate");
+        }
         return;
       }
       if (inputModeRef.current !== "head") return;
@@ -296,7 +326,11 @@ export default function App() {
     }
   }, [pushPopup, setPhase]);
 
-  useEffect(() => () => trackerRef.current?.dispose(), []);
+  useEffect(() => () => {
+    cameraRequestRef.current++;
+    clearTimers();
+    trackerRef.current?.dispose();
+  }, []);
 
   useEffect(() => {
     const tracker = trackerRef.current;
@@ -307,6 +341,7 @@ export default function App() {
   useEffect(() => {
     engine.setConfig({ sensitivity: settings.sensitivity, lateralMode: settings.lateralMode, invertVertical: settings.invertVertical });
     if (controllerRef.current) controllerRef.current.sfx.enabled = settings.sound;
+    controllerRef.current?.renderView.setReducedMotion(settings.reducedMotion);
     saveSettings(settings);
   }, [settings, engine]);
 
@@ -317,13 +352,19 @@ export default function App() {
 
   // Leaving the play view pauses the run.
   useEffect(() => {
-    if (view !== "play") pause("user");
-  }, [view, pause]);
+    if (view !== "play") {
+      pause("user");
+      stopCamera();
+    }
+    controllerRef.current?.setVisible(view === "play");
+  }, [view, pause, stopCamera]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      if (e.target instanceof HTMLElement && (e.target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName))) return;
+      if (e.target instanceof HTMLButtonElement && (e.code === "Space" || e.code === "Enter")) return;
       if (stateRef.current.view !== "play") return;
+      if (e.repeat) return;
       const current = phaseRef.current;
       if (e.code === "KeyP" || e.code === "Escape") {
         if (current === "running" || current === "countdown") pause("user");
@@ -352,6 +393,11 @@ export default function App() {
   }, [beginRun, handleAction, pause, runCountdown]);
 
   const startHead = async () => {
+    if (trackerLoading) return;
+    const request = ++cameraRequestRef.current;
+    if (runActiveRef.current) pause("user");
+    faceRef.current.frames = 0;
+    faceRef.current.last = performance.now();
     controllerRef.current?.sfx.unlock();
     inputModeRef.current = "head";
     setInputMode("head");
@@ -366,15 +412,18 @@ export default function App() {
     setTrackerLoading(true);
     try {
       await tracker.start();
+      if (request !== cameraRequestRef.current) return;
       setTrackerActive(true);
     } catch {
+      if (request !== cameraRequestRef.current) return;
       setCameraError(tracker.error ?? "Face tracking could not start.");
     } finally {
-      setTrackerLoading(false);
+      if (request === cameraRequestRef.current) setTrackerLoading(false);
     }
   };
 
   const startKeyboard = () => {
+    stopCamera();
     controllerRef.current?.sfx.unlock();
     inputModeRef.current = "keyboard";
     setInputMode("keyboard");
@@ -382,6 +431,7 @@ export default function App() {
   };
 
   const toMenu = () => {
+    stopCamera();
     clearTimers();
     runActiveRef.current = false;
     controllerRef.current?.idle();
@@ -413,14 +463,12 @@ export default function App() {
     <div className="app">
       <header className="topnav">
         <button className="brand" onClick={() => setView("play")}>
-          <span className="logo" aria-hidden>
-            🙂
-          </span>
+          <span className="logo"><Mascot small /></span>
           <span>
-            Going <b>Head</b> Surface
+            Going <b>Head</b> <em>Surface</em>
           </span>
         </button>
-        <nav>
+        <nav aria-label="Main navigation">
           {(
             [
               ["play", "Play"],
@@ -430,25 +478,32 @@ export default function App() {
               ["settings", "Settings"],
             ] as [View, string][]
           ).map(([id, label]) => (
-            <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}>
+            <button key={id} className={view === id ? "active" : ""} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>
               {label}
             </button>
           ))}
         </nav>
-        <div className="wallet" title="Coins in your wallet">
-          <span className="coin-icon" aria-hidden /> {profile.wallet.toLocaleString()}
+        <div className="nav-tools">
+          <button className="sound-toggle" aria-label={settings.sound ? "Mute sound" : "Enable sound"} onClick={() => setSettings((s) => ({ ...s, sound: !s.sound }))}><Icon name={settings.sound ? "sound" : "muted"} /></button>
+          <div className="wallet" title="In-game coins on this device"><span className="coin-icon" aria-hidden />{profile.wallet.toLocaleString()}</div>
         </div>
       </header>
 
+      {view === "play" && <section className="page-intro">
+        <div><div className="eyebrow"><span className="color-dots"><i /><i /><i /><i /></span> A HANDS-FREE LITTLE ADVENTURE</div><h1>Look sharp. <span>Run wild.</span></h1><p>Your face is the controller. Dodge, jump, and roll through a world of color.</p></div>
+        <div className="personal-best"><Icon name="trophy" /><div><span>YOUR PERSONAL BEST</span><strong>{profile.bestScore.toLocaleString()}</strong><small>Saved on this device</small></div></div>
+      </section>}
+
       <main className={`layout ${view === "play" ? "" : "hidden-game"}`}>
         <section className="game-column">
+          <div className="stage-label"><span><i className="live-dot" /> THE COLOR RUN</span><span>{inputMode === "head" ? "HEAD CONTROLS" : "KEYBOARD READY"}</span></div>
           <div className="game-viewport">
             <div ref={gameRef} className="game-canvas" />
             {showHud && <Hud hud={hud} onPause={phase === "running" ? () => pause("user") : undefined} />}
 
             {flash && (phase === "running" || phase === "tutorial") && (
               <div key={flash.id} className={`input-flash input-${flash.action}`} aria-hidden>
-                {ARROWS[flash.action]}
+                <Icon name={flash.action} />
               </div>
             )}
             <div className="popups">
@@ -475,11 +530,12 @@ export default function App() {
                   <p className="tagline">Your face is the controller.</p>
                 </div>
                 <button className="primary big" onClick={startHead}>
-                  🙂 Play with your head
+                  <Icon name="play" /> Play with your head
                 </button>
                 <button className="secondary" onClick={startKeyboard}>
-                  ⌨ Play with keyboard
+                  <Icon name="keyboard" /> Play with keyboard
                 </button>
+                <p className="menu-privacy"><Icon name="shield" /> Camera stays local. No recording.</p>
                 <div className="menu-stats">
                   <span>Best {profile.bestScore.toLocaleString()}</span>
                   <span>·</span>
@@ -521,10 +577,11 @@ export default function App() {
             {phase === "calibrate" && (
               <div className="overlay">
                 <div className="ring" style={{ ["--p" as string]: calibration.progress }}>
-                  <span>🙂</span>
+                  <span><Mascot small /></span>
                 </div>
                 <h2>Hold still and look at the screen</h2>
                 <p>{calibration.message || "Recording your neutral pose…"}</p>
+                <button className="link" onClick={startKeyboard}>Use keyboard instead</button>
               </div>
             )}
 
@@ -533,7 +590,7 @@ export default function App() {
                 <span className="step-count">
                   Gesture {Math.min(tutorialStep + 1, TUTORIAL.length)} / {TUTORIAL.length}
                 </span>
-                <h2>{tutorialStep < TUTORIAL.length ? TUTORIAL[tutorialStep].prompt : "Nice! Get ready…"}</h2>
+                <h2>{tutorialStep < TUTORIAL.length ? settings.invertVertical && tutorialTarget === "jump" ? "Look down to jump" : settings.invertVertical && tutorialTarget === "roll" ? "Look up to roll" : TUTORIAL[tutorialStep].prompt : "Nice! Get ready…"}</h2>
                 <div className="tutorial-dots">
                   {TUTORIAL.map((t, i) => (
                     <i key={t.action} className={i < tutorialStep ? "done" : i === tutorialStep ? "current" : ""} />
@@ -615,13 +672,14 @@ export default function App() {
                 <button className="primary big" onClick={beginRun}>
                   Run again
                 </button>
-                <p className="muted">{inputMode === "head" ? "…or just look up" : "…or press ↑ / Enter"}</p>
+                <p className="muted">{inputMode === "head" ? `…or just look ${settings.invertVertical ? "down" : "up"}` : "…or press ↑ / Enter"}</p>
                 <button className="link" onClick={toMenu}>
                   Menu
                 </button>
               </div>
             )}
           </div>
+          <div className="stage-footer"><span><Icon name="shield" /> Private by design</span><span><kbd>P</kbd> pause · <kbd>↑</kbd> jump · <kbd>↓</kbd> roll</span></div>
         </section>
 
         <aside className="side-column">
@@ -629,23 +687,28 @@ export default function App() {
             tracker={trackerRef.current}
             engine={engine}
             active={trackerActive}
+            loading={trackerLoading}
             faceFound={faceFound}
             mirror={settings.mirror}
             showCamera={settings.showCamera}
             showLandmarks={settings.showLandmarks}
+            sensitivity={settings.sensitivity}
+            onSensitivity={(sensitivity) => setSettings((s) => ({ ...s, sensitivity }))}
+            onEnable={startHead}
+            onStop={stopCamera}
             onToggleCamera={() => setSettings((s) => ({ ...s, showCamera: !s.showCamera }))}
             onRecalibrate={recalibrate}
             canRecalibrate={trackerActive && inputMode === "head" && phase !== "camera" && phase !== "calibrate"}
           />
-          <GestureGuide flash={flash} highlight={tutorialTarget} />
+          <GestureGuide flash={flash} highlight={tutorialTarget} invertVertical={settings.invertVertical} />
           <section className="panel mini-challenges">
-            <h3>Today</h3>
+            <div className="panel-head"><h3><Icon name="trophy" /> Today's little quests</h3><span className="tiny-label">DAILY</span></div>
             {challenges.map((c) => (
               <div key={c.id} className={`mini-challenge ${profile.claimed.includes(c.id) ? "done" : ""}`}>
-                <span>{c.label}</span>
-                <em>
+                <div><span>{c.label}</span><em>
                   {Math.min(c.target, profile.challengeProgress[c.id] ?? 0)}/{c.target}
-                </em>
+                </em></div>
+                <div className="progress"><i style={{ width: `${Math.min(1, (profile.challengeProgress[c.id] ?? 0) / c.target) * 100}%` }} /></div>
               </div>
             ))}
           </section>
@@ -670,6 +733,7 @@ export default function App() {
           </section>
         )}
       </main>
+      <footer className="site-footer"><span>Made for curious heads.</span><span>Original game · Google-inspired colors · Not affiliated with Google</span></footer>
     </div>
   );
 }
