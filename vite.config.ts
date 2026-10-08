@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   base: "./",
   plugins: [react()],
+  server: { allowedHosts: [".manus.computer"] },
   build: { chunkSizeWarningLimit: 1500 },
   test: { environment: "node", include: ["src/**/*.test.ts"] },
 });

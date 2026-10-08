@@ -1,0 +1,41 @@
+{
+  "pack": "Rome Rail Pursuit",
+  "style": "Original stylized-realistic Mediterranean city runner",
+  "runtime": {
+    "buildingSprites": [
+      "assets/runtime/travertine-palazzo.webp",
+      "assets/runtime/naples-balcony-house.webp"
+    ],
+    "stationSprite": "assets/runtime/volcanic-station-canopy.webp",
+    "trainSprites": [
+      "assets/runtime/silver-metro-car.webp",
+      "assets/runtime/terracotta-commuter-car.webp"
+    ],
+    "pursuerSprites": [
+      "assets/runtime/fedora-pursuer.webp",
+      "assets/runtime/trenchcoat-pursuer.webp",
+      "assets/runtime/floral-pursuer.webp"
+    ],
+    "music": "assets/audio/mediterranean-chase.mp3",
+    "effects": [
+      "assets/audio/lane-switch.mp3",
+      "assets/audio/jump.mp3",
+      "assets/audio/roll.mp3",
+      "assets/audio/coin.mp3",
+      "assets/audio/powerup.mp3",
+      "assets/audio/near-miss.mp3",
+      "assets/audio/collision.mp3"
+    ]
+  },
+  "sourceModels": [
+    "asset-sources/rome-rail-pursuit/models/travertine-palazzo.glb",
+    "asset-sources/rome-rail-pursuit/models/naples-balcony-house.glb",
+    "asset-sources/rome-rail-pursuit/models/volcanic-station-canopy.glb",
+    "asset-sources/rome-rail-pursuit/models/terracotta-commuter-car.glb"
+  ],
+  "integration": {
+    "renderer": "src/game/renderer.ts",
+    "audio": "src/game/audio.ts",
+    "controller": "src/game/controller.ts"
+  }
+}

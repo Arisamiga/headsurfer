@@ -27,7 +27,8 @@ The build covers phases 1–3 of the concept document, plus a local-only version
 - **Gesture engine** (`src/tracking/gestureEngine.ts`). Smoothed roll, yaw and pitch are measured relative to a neutral pose calibrated each session. It applies a neutral deadband, needs several consecutive frames above the threshold, and uses a cooldown. Each gesture fires once, and the head must return to neutral before the next one. It emits discrete actions only and never maps head angle continuously to lane position. A sensitivity slider, tilt-only/turn-only lane control and an up/down swap are in Settings.
 - **Onboarding.** Camera permission → face found → 1.5 s neutral calibration → four-gesture tutorial (first session only) → 3-2-1 countdown.
 - **Runner** (`src/game/`). Three lanes. Obstacles are trains/walls, low barriers (jump), overhead gates (roll) and oncoming moving trains. You can collect coins, a score ×2, a magnet and a shield. Score comes from distance, coins, a streak multiplier and near-miss bonuses. Speed and pattern complexity ramp up over about 150 s. The track generator always leaves a passable lane, and a test checks this by running a bot through 200 s of several seeds. Clipping a train's side bounces you back instead of ending the run.
-- **UI.** Portrait game viewport with a camera panel beside it. The panel shows a mirrored feed, face landmarks, tracking status, live tilt/nod meters with threshold marks, a hide-video privacy toggle and recalibration. Below it are a gesture guide that flashes on every accepted input, the HUD, a results screen (look up or press Enter to retry), and pages for Leaderboard, Rewards, How it works and Settings. Sound effects are synthesised with WebAudio, so there are no audio assets.
+- **Rome Rail Pursuit asset pack.** The live route uses modular travertine palazzi and painted Naples balcony houses, volcanic-stone station canopies, overhead railway structures, two original fictional city-train liveries, and three fictional retro crime-film pursuers. Runtime WebP sprites are optimized for the browser; source PNGs and GLBs remain in `asset-sources/rome-rail-pursuit/` for later scene work.
+- **Audio.** A 96-second instrumental Mediterranean electro-funk chase score starts when a run begins. Generated lane, jump, roll, coin, power-up, near-miss and collision effects are mixed with small WebAudio fallbacks during first-load buffering, and all audio obeys the existing Sound toggle.
 - **Safety and fallbacks.** The run pauses automatically when the face is lost for more than 1.2 s and resumes when you're back. It also pauses on tab switch. Keyboard fallback: arrows/WASD, Space, P/Esc. If WebGL is missing, the app shows a clear message instead of a blank page.
 - **Progression (local only).** A coin wallet, three daily challenges (deterministic per date), five unlockable outfits and a top-10 leaderboard. All of it is stored in `localStorage`.
 
@@ -47,6 +48,14 @@ src/
   meta/       progression.ts (challenges, outfits, leaderboard), storage.ts (localStorage)
   ui/         CameraPanel, GestureGuide, Hud, Views
   App.tsx     flow state machine: menu → camera → calibrate → tutorial → countdown → running/paused → over
+
+asset-sources/
+  rome-rail-pursuit/   original high-resolution PNG and GLB source assets
+
+public/assets/
+  runtime/    optimized runtime sprites
+  audio/      generated BGM and sound effects
+  manifest/   Rome Rail Pursuit asset inventory
 ```
 
 All characters, environments, UI and sounds are original. As the concept's IP note requires, nothing is taken from Subway Surfers.
