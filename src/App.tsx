@@ -4,7 +4,7 @@ import { GameController, type HudState } from "./game/controller";
 import type { World, WorldEvent } from "./game/world";
 import { HeadTracker, type TrackingFrame } from "./tracking/headTracker";
 import { GestureEngine } from "./tracking/gestureEngine";
-import { OUTFITS, dailyChallenges } from "./meta/progression";
+import { CHARACTERS, dailyChallenges } from "./meta/progression";
 import {
   loadLeaderboard,
   loadProfile,
@@ -361,8 +361,8 @@ export default function App() {
   }, [settings, engine]);
 
   useEffect(() => {
-    const outfit = OUTFITS.find((o) => o.id === profile.outfit) ?? OUTFITS[0];
-    controllerRef.current?.renderView.setOutfit(outfit);
+    const character = CHARACTERS.find((candidate) => candidate.id === profile.outfit) ?? CHARACTERS[0];
+    controllerRef.current?.renderView.setCharacter(character);
   }, [profile.outfit]);
 
   // Leaving the play view pauses the run.
@@ -769,11 +769,6 @@ export default function App() {
             {view === "rewards" && (
               <RewardsView
                 profile={profile}
-                onBuy={(id) => {
-                  const outfit = OUTFITS.find((o) => o.id === id);
-                  if (!outfit || profile.wallet < outfit.price) return;
-                  updateProfile({ ...profile, wallet: profile.wallet - outfit.price, owned: [...profile.owned, id], outfit: id });
-                }}
                 onSelect={(id) => updateProfile({ ...profile, outfit: id })}
               />
             )}
