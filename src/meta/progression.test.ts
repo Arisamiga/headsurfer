@@ -5,6 +5,7 @@ describe("progression", () => {
   it("exposes the four requested character selections", () => {
     expect(CHARACTERS.map((character) => character.name)).toEqual(["Konrad", "Aris", "Raj", "Alex"]);
     expect(CHARACTERS[0].id).toBe("konrad");
+    expect(CHARACTERS.find((character) => character.id === "konrad")?.playerModel).toBe("konrad");
     expect(CHARACTERS.find((character) => character.id === "raj")?.playerModel).toBe("raj");
   });
 
