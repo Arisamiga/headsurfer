@@ -1,22 +1,21 @@
 import type { RunStats } from "../game/world";
 import { createRng } from "../game/rng";
 
-export interface Outfit {
-  id: string;
+export interface Character {
+  id: "konrad" | "aris" | "raj" | "alex";
   name: string;
-  price: number;
-  body: number;
-  head: number;
-  accent: number;
+  description: string;
+  /** Multiplies the supplied GLB's PBR albedo; Konrad retains the original texture. */
+  tint: number;
+  card: { skin: number; shirt: number; trim: number };
 }
 
-/** Original character palette: a big-headed runner, no third-party IP. */
-export const OUTFITS: Outfit[] = [
-  { id: "classic", name: "Classic Noggin", price: 0, body: 0x4285f4, head: 0xfff2d1, accent: 0xea4335 },
-  { id: "lime", name: "Lime Zest", price: 250, body: 0x7ddc1f, head: 0xf6c99f, accent: 0x1d1d2b },
-  { id: "sunset", name: "Sunset Sprinter", price: 600, body: 0xff7a1a, head: 0xe9b48a, accent: 0x6c2bd9 },
-  { id: "midnight", name: "Midnight Bobble", price: 1200, body: 0x1d1d2b, head: 0xc79a77, accent: 0x00e5ff },
-  { id: "gold", name: "Golden Dome", price: 3000, body: 0xffc531, head: 0xffe1b8, accent: 0xff2e88 },
+/** The supplied Mixamo rig is shared until distinct character scans are available. */
+export const CHARACTERS: Character[] = [
+  { id: "konrad", name: "Konrad", description: "Current runner", tint: 0xffffff, card: { skin: 0xf0c7a7, shirt: 0x2f5fad, trim: 0xffc82e } },
+  { id: "aris", name: "Aris", description: "Cobalt route", tint: 0xbcd7ff, card: { skin: 0xd8a179, shirt: 0x3c6ee8, trim: 0xff8f24 } },
+  { id: "raj", name: "Raj", description: "Sunset route", tint: 0xffd1a6, card: { skin: 0x9a5e3d, shirt: 0xe45a32, trim: 0x45245f } },
+  { id: "alex", name: "Alex", description: "Night route", tint: 0xc9ddff, card: { skin: 0xb67f5d, shirt: 0x25324d, trim: 0x35c5be } },
 ];
 
 export type ChallengeMetric = "coins" | "jumps" | "rolls" | "distance" | "nearMisses" | "maxCombo" | "laneChanges";
