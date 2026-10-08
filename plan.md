@@ -49,3 +49,10 @@ Synthetic/browser-emulated tests cannot establish real-person accuracy or guaran
 ## Final user-directed scope adjustment
 
 Use true optimized GLB models in the game, not the initially planned WebP facade/sprite treatment. Mafiosi chase from behind facing -Z with lightweight procedural run motion; no new physics. Under the hackathon time limit, prioritize removal of stray origin instances, proportional models, clear lanes, mobile inline capture and centered play. The obstructing station canopy and overhead black bars are disabled; no further decorative expansion. Runtime model pack ~1.8 MB. Deliver a feature-branch commit/PR without merging main.
+
+## Character integration
+
+- **Player asset:** replace the temporary procedural runner with the supplied, textured Mixamo GLB for Konrad. Preserve the prior primitive rig only as a non-blocking runtime fallback if the asset cannot load.
+- **Animation bridge:** drive the GLB's named clips through `AnimationMixer`: loop `Run` while the runner is active, play `BigJump` for jumps and `RunToRolling` for rolls. The game simulation remains the source of truth for lanes, collisions and score.
+- **Selection:** change the former outfit storefront into a no-cost character selector with Konrad (default/current), Aris, Raj and Alex. The same supplied GLB is reused with distinct material tints for the three additional selectable runners until unique art is supplied.
+- **Performance and delivery:** embed the GLB PBR maps as supplied, load it only once into the Three.js scene and dispose its resources with the renderer. Keep the game browser-only and avoid new dependencies.

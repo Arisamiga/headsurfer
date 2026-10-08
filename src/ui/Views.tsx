@@ -1,5 +1,5 @@
 import type { Settings, Profile } from "../meta/storage";
-import { OUTFITS, dailyChallenges, type LeaderboardEntry } from "../meta/progression";
+import { CHARACTERS, dailyChallenges, type LeaderboardEntry } from "../meta/progression";
 
 export function LeaderboardView({ board, highlightDate }: { board: LeaderboardEntry[]; highlightDate?: string }) {
   return (
@@ -38,7 +38,7 @@ export function LeaderboardView({ board, highlightDate }: { board: LeaderboardEn
   );
 }
 
-export function RewardsView({ profile, onBuy, onSelect }: { profile: Profile; onBuy: (id: string) => void; onSelect: (id: string) => void }) {
+export function RewardsView({ profile, onSelect }: { profile: Profile; onSelect: (id: string) => void }) {
   const challenges = dailyChallenges(profile.challengeDay);
   return (
     <div className="page">
@@ -67,28 +67,22 @@ export function RewardsView({ profile, onBuy, onSelect }: { profile: Profile; on
           );
         })}
       </ul>
-      <h3>Outfits</h3>
+      <h3>Character selection</h3>
       <div className="outfits">
-        {OUTFITS.map((o) => {
-          const owned = profile.owned.includes(o.id);
-          const selected = profile.outfit === o.id;
+        {CHARACTERS.map((character) => {
+          const selected = profile.outfit === character.id;
           const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
           return (
-            <div key={o.id} className={`outfit ${selected ? "selected" : ""}`}>
+            <div key={character.id} className={`outfit ${selected ? "selected" : ""}`}>
               <div className="outfit-swatch" aria-hidden>
-                <span className="o-head" style={{ background: hex(o.head), borderColor: hex(o.accent) }} />
-                <span className="o-body" style={{ background: hex(o.body) }} />
+                <span className="o-head" style={{ background: hex(character.card.skin), borderColor: hex(character.card.trim) }} />
+                <span className="o-body" style={{ background: hex(character.card.shirt) }} />
               </div>
-              <strong>{o.name}</strong>
-              {owned ? (
-                <button onClick={() => onSelect(o.id)} disabled={selected}>
-                  {selected ? "Equipped" : "Equip"}
-                </button>
-              ) : (
-                <button onClick={() => onBuy(o.id)} disabled={profile.wallet < o.price}>
-                  {o.price.toLocaleString()} coins
-                </button>
-              )}
+              <strong>{character.name}</strong>
+              <span className="muted">{character.description}</span>
+              <button onClick={() => onSelect(character.id)} disabled={selected}>
+                {selected ? "Selected" : "Select"}
+              </button>
             </div>
           );
         })}

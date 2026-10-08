@@ -3,7 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { LANE_WIDTH } from "./config";
 import type { Obstacle, Pickup, World } from "./world";
-import type { Outfit } from "../meta/progression";
+import type { Character } from "../meta/progression";
 
 const SKY = 0x8fc9d9;
 const TRACK_LENGTH = 420;
@@ -13,6 +13,7 @@ const MODEL_WIDTH = 2.08;
 // The generated canopy reads as a block on the line at gameplay distances.
 const SHOW_STATION_CANOPY: boolean = false;
 const modelUrl = (name: string) => `${import.meta.env.BASE_URL}assets/models/${name}.glb`;
+const characterAssetUrl = () => `${import.meta.env.BASE_URL}assets/characters/konrad.glb`;
 
 type FacadeKey = "palazzo" | "naples";
 type ModelKey = FacadeKey | "station" | "silverTrain" | "terracottaTrain" | "fedora" | "trenchcoat" | "floral";
@@ -60,6 +61,13 @@ function stripes(a: string, b: string) {
   });
 }
 
+type PlayerClip = "idle" | "run" | "jump" | "roll";
+
+interface AvatarMaterial {
+  material: THREE.MeshStandardMaterial;
+  baseColor: THREE.Color;
+}
+
 interface PlayerRig {
   root: THREE.Group;
   body: THREE.Group;
@@ -72,6 +80,11 @@ interface PlayerRig {
   magnetRing: THREE.Mesh;
   blob: THREE.Mesh;
   materials: { body: THREE.MeshStandardMaterial; head: THREE.MeshStandardMaterial; accent: THREE.MeshStandardMaterial };
+  avatar: THREE.Group;
+  mixer: THREE.AnimationMixer | null;
+  actions: Partial<Record<Exclude<PlayerClip, "idle">, THREE.AnimationAction>>;
+  activeClip: PlayerClip;
+  avatarMaterials: AvatarMaterial[];
 }
 
 interface ActiveVisual {
@@ -183,6 +196,7 @@ export class GameRenderer {
   private sceneryDistance = 0;
   private reducedMotion = false;
   private disposed = false;
+  private selectedCharacter: Character | null = null;
 
   constructor(private container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
@@ -247,6 +261,7 @@ export class GameRenderer {
     this.createCoinInstances();
     this.player = this.createPlayer();
     this.scene.add(this.player.root);
+    this.loadCharacterAsset();
     this.camera.position.set(0, 4.4, 7.2);
     this.resize();
     // Missing model files are an expected optional-asset path; procedural
@@ -708,13 +723,126 @@ export class GameRenderer {
     magnetRing.position.y = 0.1;
     root.add(magnetRing);
 
-    return { root, body, head, legL, legR, armL, armR, shield, magnetRing, blob, materials };
+    const avatar = new THREE.Group();
+    avatar.name = "Konrad_Mixamo_Avatar";
+    avatar.visible = false;
+    root.add(avatar);
+
+    return {
+      root,
+      body,
+      head,
+      legL,
+      legR,
+      armL,
+      armR,
+      shield,
+      magnetRing,
+      blob,
+      materials,
+      avatar,
+      mixer: null,
+      actions: {},
+      activeClip: "idle",
+      avatarMaterials: [],
+    };
   }
 
-  setOutfit(outfit: Outfit) {
-    this.player.materials.body.color.setHex(outfit.body);
-    this.player.materials.head.color.setHex(outfit.head);
-    this.player.materials.accent.color.setHex(outfit.accent);
+  setCharacter(character: Character) {
+    this.selectedCharacter = character;
+    const tint = new THREE.Color(character.tint);
+    for (const entry of this.player.avatarMaterials) entry.material.color.copy(entry.baseColor).multiply(tint);
+  }
+
+  /** Loads the supplied skinned GLB once; the primitive runner remains visible on load failure. */
+  private loadCharacterAsset() {
+    new GLTFLoader().load(
+      characterAssetUrl(),
+      (gltf) => {
+        if (this.disposed) {
+          this.disposeAvatar(gltf.scene);
+          return;
+        }
+        const rig = this.player;
+        gltf.scene.name = "Konrad_Mixamo_Rig";
+        gltf.scene.scale.setScalar(1.18);
+        gltf.scene.traverse((object) => {
+          if (!(object instanceof THREE.Mesh)) return;
+          object.castShadow = false;
+          object.receiveShadow = false;
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          for (const material of materials) {
+            if (material instanceof THREE.MeshStandardMaterial) {
+              rig.avatarMaterials.push({ material, baseColor: material.color.clone() });
+            }
+          }
+        });
+        rig.avatar.add(gltf.scene);
+        rig.avatar.visible = true;
+        rig.body.visible = false;
+        rig.mixer = new THREE.AnimationMixer(gltf.scene);
+        const actionFor = (name: string) => {
+          const clip = gltf.animations.find((candidate) => candidate.name === name);
+          return clip ? rig.mixer!.clipAction(clip) : undefined;
+        };
+        rig.actions = {
+          run: actionFor("Run"),
+          jump: actionFor("BigJump"),
+          roll: actionFor("RunToRolling"),
+        };
+        if (this.selectedCharacter) this.setCharacter(this.selectedCharacter);
+      },
+      undefined,
+      () => {
+        // The primitive runner remains available when the optional model request fails.
+      },
+    );
+  }
+
+  private setAvatarClip(clip: PlayerClip) {
+    const rig = this.player;
+    if (!rig.mixer || rig.activeClip === clip) return;
+    const previous = rig.activeClip === "idle" ? undefined : rig.actions[rig.activeClip];
+    previous?.fadeOut(0.1);
+    rig.activeClip = clip;
+    if (clip === "idle") return;
+    const action = rig.actions[clip] ?? rig.actions.run;
+    if (!action) return;
+    action.reset();
+    action.enabled = true;
+    if (clip === "run") {
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      action.timeScale = 1;
+    } else {
+      action.setLoop(THREE.LoopOnce, 1);
+      action.clampWhenFinished = true;
+      action.timeScale = action.getClip().duration / (clip === "jump" ? 0.95 : 0.8);
+    }
+    action.fadeIn(0.1).play();
+  }
+
+  private updateAvatarAnimation(running: boolean, airborne: boolean, rolling: boolean, crashed: boolean, dt: number) {
+    const clip: PlayerClip = crashed ? "idle" : rolling ? "roll" : airborne ? "jump" : running ? "run" : "idle";
+    this.setAvatarClip(clip);
+    this.player.mixer?.update(dt);
+  }
+
+  private disposeAvatar(root: THREE.Object3D) {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    const textures = new Set<THREE.Texture>();
+    root.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      geometries.add(object.geometry);
+      const meshMaterials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of meshMaterials) {
+        materials.add(material);
+        for (const value of Object.values(material)) if (value instanceof THREE.Texture) textures.add(value);
+      }
+    });
+    textures.forEach((texture) => texture.dispose());
+    materials.forEach((material) => material.dispose());
+    geometries.forEach((geometry) => geometry.dispose());
   }
 
   setReducedMotion(reduced: boolean) {
@@ -1061,8 +1189,13 @@ export class GameRenderer {
 
     // Player mechanics and silhouette remain unchanged; reduced motion only removes cosmetic movement.
     const rig = this.player;
-    rig.root.position.set(p.x, p.y, 0);
     const running = !idle && !crashed;
+    // The Mixamo jump clip carries its own vertical arc, so only a small amount
+    // of simulated lift is added when the GLB is active. The primitive fallback
+    // retains the original full physics lift.
+    const playerLift = rig.avatar.visible ? p.y * 0.25 : p.y;
+    rig.root.position.set(p.x, playerLift, 0);
+    this.updateAvatarAnimation(running, p.y > 0, world.rolling, crashed, dt);
     const cycle = t * (running ? 4 + world.speed * 0.35 : 7);
     const swing = Math.sin(cycle) * (p.y > 0 ? 0.25 : 0.9);
     rig.legL.rotation.x = swing;
@@ -1092,7 +1225,7 @@ export class GameRenderer {
     rig.magnetRing.visible = world.magnetTime > 0;
     rig.magnetRing.rotation.z = this.reducedMotion ? 0 : t * 4;
     rig.root.visible = !(world.invulnerableTime > 0 && Math.floor(t * 20) % 2 === 0);
-    rig.blob.position.y = 0.02 - p.y;
+    rig.blob.position.y = 0.02 - playerLift;
     rig.blob.scale.setScalar(Math.max(0.4, 1 - p.y * 0.25));
 
     // The camera follows lane choice but reserves sway and impact shake for full-motion mode.
@@ -1116,6 +1249,7 @@ export class GameRenderer {
     this.resetEntitySync();
     this.obstaclePool.clear();
     this.powerPool.clear();
+    this.disposeAvatar(this.player.avatar);
     for (const mesh of [
       this.coinMesh,
       this.houseWalls,

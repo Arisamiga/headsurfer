@@ -4,7 +4,7 @@ import { GameController, type HudState } from "./game/controller";
 import type { World, WorldEvent } from "./game/world";
 import { HeadTracker, type TrackingFrame } from "./tracking/headTracker";
 import { GestureEngine } from "./tracking/gestureEngine";
-import { OUTFITS, dailyChallenges } from "./meta/progression";
+import { CHARACTERS, dailyChallenges } from "./meta/progression";
 import {
   loadLeaderboard,
   loadProfile,
@@ -19,12 +19,20 @@ import { GestureGuide } from "./ui/GestureGuide";
 import { CameraPanel } from "./ui/CameraPanel";
 import { Hud } from "./ui/Hud";
 import { HowItWorksView, LeaderboardView, RewardsView, SettingsView } from "./ui/Views";
-import { Icon, Mascot } from "./ui/Icons";
+import { Icon, Mascot, Wordmark, type IconName } from "./ui/Icons";
 import { swipeAction, type SwipePoint } from "./ui/touchInput";
 
 type View = "play" | "leaderboard" | "rewards" | "how" | "settings";
 type Phase = "menu" | "camera" | "calibrate" | "tutorial" | "countdown" | "running" | "paused" | "over";
 type InputMode = "head" | "keyboard";
+
+const NAV_ITEMS: [View, string, IconName][] = [
+  ["play", "Play", "home"],
+  ["leaderboard", "Leaderboard", "trophy"],
+  ["rewards", "Rewards", "gift"],
+  ["how", "How it works", "info"],
+  ["settings", "Settings", "settings"],
+];
 
 const TUTORIAL: { action: Action; prompt: string }[] = [
   { action: "jump", prompt: "Lift your chin slightly to jump" },
@@ -425,8 +433,8 @@ export default function App() {
   }, [settings, engine]);
 
   useEffect(() => {
-    const outfit = OUTFITS.find((o) => o.id === profile.outfit) ?? OUTFITS[0];
-    controllerRef.current?.renderView.setOutfit(outfit);
+    const character = CHARACTERS.find((candidate) => candidate.id === profile.outfit) ?? CHARACTERS[0];
+    controllerRef.current?.renderView.setCharacter(character);
   }, [profile.outfit]);
 
   // Leaving the play view pauses the run.
@@ -564,57 +572,40 @@ export default function App() {
   return (
     <div className={`app ${focus ? "is-focus" : ""}`}>
       <header className="topnav">
-        <button className="brand" onClick={() => setView("play")}>
-          <span className="logo"><Mascot small /></span>
-          <span className="brand-name">
-            Going <b>Head</b> <em>Surface</em>
-          </span>
-          <span className="brand-route"><Icon name="rail" />Rome Rail Pursuit</span>
+        <button className="brand" onClick={() => setView("play")} aria-label="HeadSurfers home">
+          <Wordmark />
         </button>
+
         <nav aria-label="Main navigation">
-          {(
-            [
-              ["play", "Play"],
-              ["leaderboard", "Leaderboard"],
-              ["rewards", "Rewards"],
-              ["how", "How it works"],
-              ["settings", "Settings"],
-            ] as [View, string][]
-          ).map(([id, label]) => (
-            <button key={id} className={view === id ? "active" : ""} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>
-              {label}
+          {NAV_ITEMS.map(([id, label, icon]) => (
+            <button
+              key={id}
+              className={`nav-${id} ${view === id ? "active" : ""}`}
+              aria-current={view === id ? "page" : undefined}
+              onClick={() => setView(id)}
+            >
+              <Icon name={icon} />
+              <span>{label}</span>
             </button>
           ))}
         </nav>
+
         <div className="nav-tools">
-          <button className="sound-toggle" aria-label={settings.sound ? "Mute sound" : "Enable sound"} onClick={() => setSettings((s) => ({ ...s, sound: !s.sound }))}><Icon name={settings.sound ? "sound" : "muted"} /></button>
-          <div className="wallet" title="In-game coins on this device"><span className="coin-icon" aria-hidden />{profile.wallet.toLocaleString()}</div>
+          <button className="tool-button" aria-label={settings.sound ? "Mute sound" : "Enable sound"} onClick={() => setSettings((s) => ({ ...s, sound: !s.sound }))}>
+            <Icon name={settings.sound ? "sound" : "muted"} />
+          </button>
+          <button className={`tool-button settings-button ${view === "settings" ? "active" : ""}`} aria-label="Settings" onClick={() => setView("settings")}>
+            <Icon name="settings" />
+          </button>
+          <div className="wallet" title="In-game coins on this device">
+            <span className="coin-icon" aria-hidden />
+            <span>{profile.wallet.toLocaleString()}</span>
+          </div>
         </div>
       </header>
 
       <main className={`layout ${view !== "play" ? "hidden-game" : focus ? "focus" : "landing"}`}>
-        {view === "play" && !focus && (
-          <section className="route-ticket" aria-label="Rome Rail Pursuit">
-            <span className="ticket-stamp" aria-hidden>ROMA<b>01</b></span>
-            <p className="eyebrow"><Icon name="rail" /> ROUTE 01 · ROMA → NAPOLI</p>
-            <h1>A little tilt. <span>A Roman getaway.</span></h1>
-            <p className="lede">Three mafiosi are on your heels. Tilt to switch rails, lift your chin to leap, lower it to duck. The camera works on this device only.</p>
-            <dl className="ticket-stats">
-              <div><dt>Best run</dt><dd>{profile.bestScore.toLocaleString()}</dd></div>
-              <div><dt>Runs</dt><dd>{profile.runs.toLocaleString()}</dd></div>
-              <div><dt>Quests</dt><dd>{challenges.filter((c) => profile.claimed.includes(c.id)).length}/3</dd></div>
-            </dl>
-            <ul className="cast" aria-label="Your pursuers">
-              <li><i className="cast-dot fedora" /><b>Il Cappello</b><span>the fedora</span></li>
-              <li><i className="cast-dot coat" /><b>Il Cappotto</b><span>the trenchcoat</span></li>
-              <li><i className="cast-dot floral" /><b>I Fiori</b><span>the floral shirt</span></li>
-            </ul>
-            <p className="ticket-note">Original 3D route: travertine palazzi, Naples balconies, a volcanic-stone station and two city trains.</p>
-          </section>
-        )}
-
         <section className="game-column">
-          <div className="stage-label"><span><i className="live-dot" /> {focus ? "NOW RUNNING · ROUTE 01" : "ROME RAIL PURSUIT"}</span><span>{inputMode === "head" ? "HEAD CONTROLS" : touchFirst ? "SWIPE CONTROLS" : "KEYBOARD READY"}</span></div>
           <div className="game-viewport" onPointerDown={onSwipeStart} onPointerUp={onSwipeEnd} onPointerCancel={() => { swipeRef.current = null; }}>
             <div ref={gameRef} className="game-canvas" />
             {showHud && <Hud hud={hud} onPause={phase === "running" ? () => pause("user") : undefined} />}
@@ -642,19 +633,23 @@ export default function App() {
             {phase === "menu" && !webglError && (
               <div className="overlay menu">
                 <div className="menu-title">
-                  <span className="menu-kicker">Rome Rail Pursuit</span>
-                  <h1>
-                    Going <span>Head</span> Surface
-                  </h1>
+                  <span className="menu-kicker"><Icon name="rail" /> Rome Rail Pursuit</span>
+                  <Wordmark />
                   <p className="tagline">Your head is the controller. They are right behind you.</p>
                 </div>
-                <button className="primary big" onClick={startHead}>
-                  <Icon name="play" /> Play with your head
-                </button>
-                <button className="secondary" onClick={startKeyboard}>
-                  <Icon name={touchFirst ? "touch" : "keyboard"} /> {touchFirst ? "Play with swipes" : "Play with keyboard"}
-                </button>
-                <p className="menu-privacy"><Icon name="shield" /> Camera stays local. No recording.</p>
+                <div className="menu-actions">
+                  <button className="primary big" onClick={startHead}>
+                    <Icon name="camera" /> Play with your head
+                  </button>
+                  <button className="secondary" onClick={startKeyboard}>
+                    <Icon name={touchFirst ? "touch" : "keyboard"} /> {touchFirst ? "Play with swipes" : "Play with keyboard"}
+                  </button>
+                  <p className="menu-privacy"><Icon name="shield" /> Camera stays local. No recording.</p>
+                  <div className="menu-stats">
+                    <span><Icon name="trophy" /> Best {profile.bestScore.toLocaleString()}</span>
+                    <span><Icon name="bolt" /> {challenges.filter((c) => profile.claimed.includes(c.id)).length}/3 daily quests</span>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -793,7 +788,10 @@ export default function App() {
               </div>
             )}
           </div>
-          <div className="stage-footer"><span><Icon name="shield" /> Private by design</span><span>{touchFirst ? "Swipe ← → to switch · ↑ jump · ↓ roll" : <><kbd>P</kbd> pause · <kbd>↑</kbd> jump · <kbd>↓</kbd> roll</>}</span></div>
+          <div className="stage-footer">
+            <span className={`input-mode ${inputMode}`}><i className="live-dot" />{inputMode === "head" ? "Head controls" : touchFirst ? "Swipe controls" : "Keyboard ready"}</span>
+            <span className="key-hints">{touchFirst ? "Swipe ← → lanes · ↑ jump · ↓ roll" : <><kbd>P</kbd> pause <kbd>↑</kbd> jump <kbd>↓</kbd> roll <kbd>←→</kbd> lanes</>}</span>
+          </div>
         </section>
 
         <aside className="side-column">
@@ -807,6 +805,9 @@ export default function App() {
             showCamera={settings.showCamera}
             showLandmarks={settings.showLandmarks}
             sensitivity={settings.sensitivity}
+            flash={flash}
+            highlight={tutorialTarget}
+            invertVertical={settings.invertVertical}
             onSensitivity={(sensitivity) => setSettings((s) => ({ ...s, sensitivity }))}
             onEnable={startHead}
             onStop={stopCamera}
@@ -817,17 +818,35 @@ export default function App() {
             diagnostics={trackingDiagnostics}
           />
           <GestureGuide flash={flash} highlight={tutorialTarget} invertVertical={settings.invertVertical} />
-          <section className="panel mini-challenges">
-            <div className="panel-head"><h3><Icon name="trophy" /> Today's little quests</h3><span className="tiny-label">DAILY</span></div>
-            {challenges.map((c) => (
-              <div key={c.id} className={`mini-challenge ${profile.claimed.includes(c.id) ? "done" : ""}`}>
-                <div><span>{c.label}</span><em>
-                  {Math.min(c.target, profile.challengeProgress[c.id] ?? 0)}/{c.target}
-                </em></div>
-                <div className="progress"><i style={{ width: `${Math.min(1, (profile.challengeProgress[c.id] ?? 0) / c.target) * 100}%` }} /></div>
+          <div className="bottom-row">
+            <section className="promo" aria-label="About HeadSurfers">
+              <div className="promo-copy">
+                <h2>Play with your head.<span>Earn coins as you run.</span></h2>
+                <ul className="promo-points">
+                  <li><Icon name="shield" /> Private by design</li>
+                  <li><Icon name="camera" /> Cam stays local</li>
+                  <li><Icon name="globe" /> Runs in your browser</li>
+                </ul>
               </div>
-            ))}
-          </section>
+              <div className="promo-stats">
+                <div><span>Personal best</span><strong>{profile.bestScore.toLocaleString()}</strong></div>
+                <div><span>Runs</span><strong>{profile.runs.toLocaleString()}</strong></div>
+              </div>
+              <span className="promo-coin c1" aria-hidden />
+              <span className="promo-coin c2" aria-hidden />
+            </section>
+            <section className="panel mini-challenges">
+              <div className="panel-head"><h3><Icon name="trophy" /> Daily quests</h3><span className="tiny-label">Resets daily</span></div>
+              {challenges.map((c) => (
+                <div key={c.id} className={`mini-challenge ${profile.claimed.includes(c.id) ? "done" : ""}`}>
+                  <div><span>{c.label}</span><em>
+                    {Math.min(c.target, profile.challengeProgress[c.id] ?? 0)}/{c.target}
+                  </em></div>
+                  <div className="progress"><i style={{ width: `${Math.min(1, (profile.challengeProgress[c.id] ?? 0) / c.target) * 100}%` }} /></div>
+                </div>
+              ))}
+            </section>
+          </div>
         </aside>
 
         {view !== "play" && (
@@ -836,11 +855,6 @@ export default function App() {
             {view === "rewards" && (
               <RewardsView
                 profile={profile}
-                onBuy={(id) => {
-                  const outfit = OUTFITS.find((o) => o.id === id);
-                  if (!outfit || profile.wallet < outfit.price) return;
-                  updateProfile({ ...profile, wallet: profile.wallet - outfit.price, owned: [...profile.owned, id], outfit: id });
-                }}
                 onSelect={(id) => updateProfile({ ...profile, outfit: id })}
               />
             )}
@@ -849,7 +863,7 @@ export default function App() {
           </section>
         )}
       </main>
-      <footer className="site-footer"><span>Made for curious heads.</span><span>Original game and Rome route models · Not affiliated with Google or any rail operator</span></footer>
+      <footer className="site-footer"><span>Made for curious heads.</span><span>Original game and Rome route models · Camera processed on-device</span></footer>
     </div>
   );
 }
