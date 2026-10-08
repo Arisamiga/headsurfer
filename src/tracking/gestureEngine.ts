@@ -26,7 +26,7 @@ export interface GestureConfig {
 
 export const DEFAULT_GESTURE_CONFIG: GestureConfig = {
   sensitivity: 1,
-  lateralMode: "both",
+  lateralMode: "tilt",
   invertVertical: false,
   rollThresholdDeg: 13,
   yawThreshold: 0.11,

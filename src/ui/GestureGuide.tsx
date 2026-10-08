@@ -2,10 +2,10 @@ import type { Action } from "../types";
 import { Icon } from "./Icons";
 
 const GESTURES: { action: Action; title: string; subtitle: string; keys: string }[] = [
-  { action: "left", title: "Tilt left", subtitle: "Switch lane", keys: "← / A" },
-  { action: "right", title: "Tilt right", subtitle: "Switch lane", keys: "→ / D" },
-  { action: "jump", title: "Look up", subtitle: "Jump over", keys: "↑ / W / Space" },
-  { action: "roll", title: "Look down", subtitle: "Roll under", keys: "↓ / S" },
+  { action: "left", title: "Slowly tilt left", subtitle: "Lane left", keys: "← / A" },
+  { action: "right", title: "Slowly tilt right", subtitle: "Lane right", keys: "→ / D" },
+  { action: "jump", title: "Lift chin slightly", subtitle: "Jump", keys: "↑ / W / Space" },
+  { action: "roll", title: "Lower chin", subtitle: "Roll / duck", keys: "↓ / S" },
 ];
 
 export function GestureGuide({ flash, highlight, invertVertical = false }: { flash: { action: Action; id: number } | null; highlight?: Action | null; invertVertical?: boolean }) {
@@ -20,7 +20,8 @@ export function GestureGuide({ flash, highlight, invertVertical = false }: { fla
           </div>
         ))}
       </div>
-      <p className="guide-note">One move per gesture. Return to center between moves.</p>
+      <p className="guide-note">Neutral / rest: return your head to centre before the next gesture.</p>
+      <p className="guide-note">Use small, gentle movements within a comfortable range. Do not force a stretch.</p>
     </section>
   );
 }

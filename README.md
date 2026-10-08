@@ -79,3 +79,14 @@ The camera source is a real attached muted video with `playsinline` and `webkit-
 Gesture smoothing/dwell use actual timestamps, preserving response at different inference rates; calibration derives a robust noise envelope, extreme isolated spikes need confirmation, and face loss requires a neutral return before re-arming. These are regression-tested engineering refinements, not a measured real-face accuracy guarantee.
 
 Validation covers deterministic game/tracking/touch tests, type checking, production build, asset HTTP headers and Chromium checks for centered desktop/mobile bounds, swipe actions, GLB loads, and an attached inline fake-device video. A fake stream does **not** establish physical iOS/Android camera reliability or person-level accuracy; device testing remains required. The renderer still reports the standard Three.js bundle-size warning, and this change does not claim a specific frame rate.
+
+All characters, environments, UI and sounds are original. As the concept's IP note requires, nothing is taken from Subway Surfers.
+
+## Recommended head controls
+
+- Move left/right: slowly tilt your head left/right (tilt-only is the default).
+- Jump: lift your chin / look slightly upward.
+- Roll / duck: lower your chin toward your chest.
+- Neutral / rest: return your head to centre before the next action.
+
+Use small, gentle movements within a comfortable range; never force a stretch. These are game controls, not a therapeutic exercise programme. Existing saved control preferences are preserved, and alternate lane controls remain available in Settings.

@@ -27,10 +27,10 @@ type Phase = "menu" | "camera" | "calibrate" | "tutorial" | "countdown" | "runni
 type InputMode = "head" | "keyboard";
 
 const TUTORIAL: { action: Action; prompt: string }[] = [
-  { action: "jump", prompt: "Look up to jump" },
-  { action: "roll", prompt: "Look down to roll" },
-  { action: "left", prompt: "Tilt your head left" },
-  { action: "right", prompt: "Tilt your head right" },
+  { action: "jump", prompt: "Lift your chin slightly to jump" },
+  { action: "roll", prompt: "Lower your chin toward your chest to roll / duck" },
+  { action: "left", prompt: "Slowly tilt your head left" },
+  { action: "right", prompt: "Slowly tilt your head right" },
 ];
 const CALIBRATION_MS = 1500;
 const FACE_LOST_PAUSE_MS = 1200;
@@ -645,7 +645,7 @@ export default function App() {
                     <i key={t.action} className={i < tutorialStep ? "done" : i === tutorialStep ? "current" : ""} />
                   ))}
                 </div>
-                <p className="muted">Then return to neutral. {touchFirst ? "Swipes" : "Keyboard"} work too.</p>
+                <p className="muted">Then return your head to centre to rest. {touchFirst ? "Swipes" : "Keyboard"} work too.</p>
                 <button
                   className="link"
                   onClick={() => {
