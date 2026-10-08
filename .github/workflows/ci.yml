@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm audit --audit-level=high
+      - name: Build and smoke-test the production container
+        run: |
+          docker build -t headsurfer:test .
+          docker run -d --name headsurfer-test -p 8080:8080 headsurfer:test
+          trap 'docker logs headsurfer-test; docker rm -f headsurfer-test' EXIT
+          ready=false
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/healthz; then ready=true; break; fi
+            sleep 1
+          done
+          test "$ready" = true
+          curl -fsS http://localhost:8080/ | grep -q 'Going Head Surface'
+          curl -fsS http://localhost:8080/mediapipe/face_landmarker.task -o /tmp/face_landmarker.task
+          echo '64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff  /tmp/face_landmarker.task' | sha256sum -c -
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/mediapipe/missing.wasm)" = 404
+          curl -fsSI http://localhost:8080/mediapipe/wasm/vision_wasm_internal.wasm | grep -qi 'content-type: application/wasm'

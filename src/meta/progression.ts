@@ -12,7 +12,7 @@ export interface Outfit {
 
 /** Original character palette: a big-headed runner, no third-party IP. */
 export const OUTFITS: Outfit[] = [
-  { id: "classic", name: "Classic Noggin", price: 0, body: 0x2f6bff, head: 0xffd2a8, accent: 0xff4d6d },
+  { id: "classic", name: "Classic Noggin", price: 0, body: 0x4285f4, head: 0xfff2d1, accent: 0xea4335 },
   { id: "lime", name: "Lime Zest", price: 250, body: 0x7ddc1f, head: 0xf6c99f, accent: 0x1d1d2b },
   { id: "sunset", name: "Sunset Sprinter", price: 600, body: 0xff7a1a, head: 0xe9b48a, accent: 0x6c2bd9 },
   { id: "midnight", name: "Midnight Bobble", price: 1200, body: 0x1d1d2b, head: 0xc79a77, accent: 0x00e5ff },

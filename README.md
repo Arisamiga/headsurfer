@@ -1,52 +1,61 @@
 # Going Head Surface
 
-A 3D endless runner for the browser that you control with your head. A webcam tracks your head in real time: tilt left or right to change lanes, look up to jump, look down to roll.
+Going Head Surface is a browser-only 3D runner controlled with head gestures or the keyboard. Webcam frames are processed locally in the browser: this deployment has no API and does not upload, record, or store camera frames or face geometry.
 
-This repository contains the self-contained Going Head Surface app.
+## Local development
 
-## Run it
-
-Requirements: Node.js 20+ and a browser with WebGL and webcam access (Chrome, Edge, Firefox or Safari).
+Requires **Node.js 22.12+**, a WebGL-capable browser, and a webcam for head controls.
 
 ```bash
-npm install
-npm run dev        # http://localhost:5173
-npm test           # unit tests (gesture engine, head pose, game rules, progression)
-npm run build      # static site in dist/
+npm ci
+npm run dev                # http://localhost:5173
+npm test
+npm run typecheck
+npm run build              # static output in dist/
 ```
 
-`npm run dev` and `npm run build` copy the MediaPipe WASM runtime from `node_modules` into `public/mediapipe/`, so it is served from your own origin. The face model (~3.6 MB) loads from Google's MediaPipe model bucket by default. To self-host it, set `VITE_FACE_MODEL_URL`.
+`scripts/copy-mediapipe.mjs` copies MediaPipe WASM from the installed package and prepares `public/mediapipe/face_landmarker.task`. The model is downloaded from the pinned official MediaPipe URL only when needed, verified against its hard-coded SHA-256, retried on transient failure, and written atomically. Its cache is in `$XDG_CACHE_HOME/going-head-surface` (or `~/.cache/going-head-surface`); a cache entry with the wrong hash is discarded rather than used.
 
-Camera access needs a secure context: `localhost` or HTTPS.
+`VITE_FACE_MODEL_URL` is an optional **browser-visible, build-time** setting. With no configuration, the model and runtime load from the game's own origin. To deliberately use another public model, export that URL before a build; the preparation script respects it and skips downloading/bundling the default model. `.env.example` documents the setting. Never place secrets in `VITE_*` variables.
 
-## What's in the build
+## Hackathon edition
 
-The build covers phases 1–3 of the concept document, plus a local-only version of the phase 4 retention layer.
+The original runner now has a light, Google Doodle-inspired four-color interface and an original low-poly toy town. There are no copied Google or Subway Surfers assets and no affiliation with either game/brand. Scores, daily challenges, outfits and coins stay on this device; coins have no monetary value.
 
-- **Tracking.** `getUserMedia` feeds MediaPipe Face Landmarker. Inference is capped at 30 Hz (20 Hz on slow devices, which also drop to 320×240) and runs separately from the 60 FPS render loop. Video never leaves the browser.
-- **Gesture engine** (`src/tracking/gestureEngine.ts`). Smoothed roll, yaw and pitch are measured relative to a neutral pose calibrated each session. It applies a neutral deadband, needs several consecutive frames above the threshold, and uses a cooldown. Each gesture fires once, and the head must return to neutral before the next one. It emits discrete actions only and never maps head angle continuously to lane position. A sensitivity slider, tilt-only/turn-only lane control and an up/down swap are in Settings.
-- **Onboarding.** Camera permission → face found → 1.5 s neutral calibration → four-gesture tutorial (first session only) → 3-2-1 countdown.
-- **Runner** (`src/game/`). Three lanes. Obstacles are trains/walls, low barriers (jump), overhead gates (roll) and oncoming moving trains. You can collect coins, a score ×2, a magnet and a shield. Score comes from distance, coins, a streak multiplier and near-miss bonuses. Speed and pattern complexity ramp up over about 150 s. The track generator always leaves a passable lane, and a test checks this by running a bot through 200 s of several seeds. Clipping a train's side bounces you back instead of ending the run.
-- **UI.** Portrait game viewport with a camera panel beside it. The panel shows a mirrored feed, face landmarks, tracking status, live tilt/nod meters with threshold marks, a hide-video privacy toggle and recalibration. Below it are a gesture guide that flashes on every accepted input, the HUD, a results screen (look up or press Enter to retry), and pages for Leaderboard, Rewards, How it works and Settings. Sound effects are synthesised with WebAudio, so there are no audio assets.
-- **Safety and fallbacks.** The run pauses automatically when the face is lost for more than 1.2 s and resumes when you're back. It also pauses on tab switch. Keyboard fallback: arrows/WASD, Space, P/Esc. If WebGL is missing, the app shows a clear message instead of a blank page.
-- **Progression (local only).** A coin wallet, three daily challenges (deterministic per date), five unlockable outfits and a top-10 leaderboard. All of it is stored in `localStorage`.
+Head tracking corrects landmark coordinates for camera aspect ratio, rejects unstable calibration, and requires two centered frames before rearming a fired gesture. MediaPipe loads only when head controls are enabled. Camera/model startup cancellation, failures and stalled frames are handled explicitly; leaving Play or switching to keyboard stops the webcam. Hide preview only hides the image—the power button actually turns the camera off.
 
-## Not built yet
+The renderer instances coins, houses and trees, pools obstacle/power-up meshes, caps pixel ratio at 1.5 and releases GPU resources on teardown. Hidden tabs and non-game pages suppress rendering/inference work. Settings includes reduced motion; camera-panel sensitivity can be tuned without leaving Play. These are engineering improvements, not a promise of a particular FPS or measured real-face accuracy.
 
-- Accounts, an online/seasonal leaderboard, analytics and any server API. The concept calls for "a lightweight API" in phase 4. The local leaderboard and wallet are shaped so that a backend can replace `src/meta/storage.ts`.
-- Real-money or sponsored rewards. The concept recommends deferring these until after validation.
-- Mobile-specific tuning. The layout is responsive, but front-camera framing and a touch fallback haven't been tuned.
-- Threshold tuning across many real faces and cameras. The defaults were tested against a synthetic camera feed, not a live player panel.
+## Production with Docker
 
-## Layout
-
-```text
-src/
-  tracking/   headPose.ts (landmarks → roll/yaw/pitch), gestureEngine.ts, headTracker.ts (webcam + MediaPipe)
-  game/       world.ts (simulation), spawner.ts (track patterns), renderer.ts (Three.js), controller.ts (loop), audio.ts
-  meta/       progression.ts (challenges, outfits, leaderboard), storage.ts (localStorage)
-  ui/         CameraPanel, GestureGuide, Hud, Views
-  App.tsx     flow state machine: menu → camera → calibrate → tutorial → countdown → running/paused → over
+```bash
+docker compose up --build
+curl -fsS http://localhost:8080/healthz
 ```
 
-All characters, environments, UI and sounds are original. As the concept's IP note requires, nothing is taken from Subway Surfers.
+The image uses a Node 22 Alpine build stage (`npm ci`, `npm run build`) and an `nginxinc/nginx-unprivileged:alpine` runtime on port **8080**. Docker builds default `VITE_FACE_MODEL_URL` to `/mediapipe/face_landmarker.task`, so the model and WASM load from the same origin. To choose another browser-accessible model URL at build time:
+
+```bash
+VITE_FACE_MODEL_URL=https://example.invalid/face_landmarker.task docker compose build
+```
+
+Compose maps `8080:8080`. `http://localhost:8080` is a secure-context exception accepted by browsers for camera access. A non-local HTTP URL is **not** suitable for webcam permission: deploy behind HTTPS with a valid certificate (or an HTTPS reverse proxy) for real users.
+
+## Static-server behavior
+
+- `/healthz` is an unauthenticated `200 OK` endpoint.
+- Vite hashed files under `/assets/` are cached for one year with `immutable`; HTML, MediaPipe files, and other mutable files are revalidated. There is no SPA fallback—missing assets, including MediaPipe WASM/model paths, return `404`.
+- The build creates useful `.gz` siblings and Nginx also enables gzip. WebAssembly is served as `application/wasm`.
+- The runtime is unprivileged and sets `nosniff`, frame, referrer, and restrictive `Permissions-Policy` headers. Camera permission is limited to the same origin (`camera=(self)`). A blanket CSP is intentionally not added because an untested policy can break the browser WASM/worker runtime.
+
+## CI and validation
+
+GitHub Actions (`.github/workflows/ci.yml`) runs `npm ci`, tests, type checking, production build, `npm audit --audit-level=high`, and a container build/HTTP smoke test on pull requests and `main` pushes.
+
+Automated checks exercise deterministic game and tracking logic, not real-person webcam behavior. Before release, test camera permission and all gestures on the intended HTTPS origin with different browsers, lighting, and camera positions; measure false triggers and responsiveness there. No webcam-accuracy or frame-rate claim is made by this repository.
+
+## Controls and scope
+
+Tilt left/right to change lane, look up to jump, and look down to roll after calibration. Keyboard fallback remains available (arrows/WASD and Space). The game, tracking, scores, and progression remain client-side; accounts, server APIs, analytics, and biometric upload are not part of this deployment.
+
+Press **P/Esc** to pause. Select the camera power button to stop head controls and continue with keyboard after resuming. Recenter pauses the run while measuring a new neutral pose. The four-gesture guide reflects the up/down swap setting.

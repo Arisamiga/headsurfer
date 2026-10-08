@@ -4,6 +4,16 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   base: "./",
   plugins: [react()],
-  build: { chunkSizeWarningLimit: 1500 },
+  server: { allowedHosts: [".manus.computer"] },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          three: ["three"],
+          vision: ["@mediapipe/tasks-vision"],
+        },
+      },
+    },
+  },
   test: { environment: "node", include: ["src/**/*.test.ts"] },
 });
