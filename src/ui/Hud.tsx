@@ -1,5 +1,6 @@
 import type { HudState } from "../game/controller";
 import { TUNING } from "../game/config";
+import { Icon } from "./Icons";
 
 export function Hud({ hud, onPause }: { hud: HudState; onPause?: () => void }) {
   return (
@@ -17,7 +18,7 @@ export function Hud({ hud, onPause }: { hud: HudState; onPause?: () => void }) {
           <div className={`hud-mult ${hud.multiplier > 1 ? "hot" : ""}`}>×{hud.multiplier.toFixed(1)}</div>
           {onPause && (
             <button className="icon-button" onClick={onPause} aria-label="Pause">
-              ❚❚
+              <Icon name="pause" />
             </button>
           )}
         </div>
