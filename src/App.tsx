@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Action } from "./types";
 import { GameController, type HudState } from "./game/controller";
 import type { World, WorldEvent } from "./game/world";
@@ -20,6 +20,7 @@ import { CameraPanel } from "./ui/CameraPanel";
 import { Hud } from "./ui/Hud";
 import { HowItWorksView, LeaderboardView, RewardsView, SettingsView } from "./ui/Views";
 import { Icon, Mascot } from "./ui/Icons";
+import { swipeAction, type SwipePoint } from "./ui/touchInput";
 
 type View = "play" | "leaderboard" | "rewards" | "how" | "settings";
 type Phase = "menu" | "camera" | "calibrate" | "tutorial" | "countdown" | "running" | "paused" | "over";
@@ -75,6 +76,8 @@ export default function App() {
   const [pauseReason, setPauseReason] = useState<"user" | "face" | null>(null);
   const [result, setResult] = useState<RunResult | null>(null);
   const [webglError, setWebglError] = useState(false);
+  const [tracker, setTracker] = useState<HeadTracker | null>(null);
+  const touchFirst = useMemo(() => typeof window !== "undefined" && (window.matchMedia?.("(pointer: coarse)").matches ?? false), []);
 
   const gameRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<GameController | null>(null);
@@ -91,6 +94,7 @@ export default function App() {
   const runActiveRef = useRef(false);
   const popupId = useRef(0);
   const cameraRequestRef = useRef(0);
+  const swipeRef = useRef<SwipePoint | null>(null);
 
   const setPhase = useCallback((p: Phase) => {
     phaseRef.current = p;
@@ -326,10 +330,21 @@ export default function App() {
     }
   }, [pushPopup, setPhase]);
 
-  useEffect(() => () => {
-    cameraRequestRef.current++;
-    clearTimers();
-    trackerRef.current?.dispose();
+  // Create the (cheap) tracker up front: its <video> must already be attached
+  // to the visible camera panel before play() runs, or mobile Safari can keep
+  // a detached camera stream without delivering frames. MediaPipe still loads
+  // only when the player enables head controls.
+  useEffect(() => {
+    const created = new HeadTracker();
+    trackerRef.current = created;
+    setTracker(created);
+    return () => {
+      cameraRequestRef.current++;
+      clearTimers();
+      if (trackerRef.current === created) trackerRef.current = null;
+      created.dispose();
+      setTracker(null);
+    };
   }, []);
 
   useEffect(() => {
@@ -358,6 +373,12 @@ export default function App() {
     }
     controllerRef.current?.setVisible(view === "play");
   }, [view, pause, stopCamera]);
+
+  const focus = view === "play" && phase !== "menu";
+  useEffect(() => {
+    // Entering a run brings the centered stage into view without fullscreen.
+    if (focus) window.scrollTo({ top: 0, behavior: settings.reducedMotion ? "auto" : "smooth" });
+  }, [focus, settings.reducedMotion]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -403,20 +424,23 @@ export default function App() {
     setInputMode("head");
     setCameraError(null);
     setPhase("camera");
-    if (!trackerRef.current) trackerRef.current = new HeadTracker();
-    const tracker = trackerRef.current;
-    if (tracker.status === "running") {
+    const current = trackerRef.current;
+    if (!current) {
+      setCameraError("Face tracking is still preparing. Try again in a moment.");
+      return;
+    }
+    if (current.status === "running") {
       setTrackerActive(true);
       return;
     }
     setTrackerLoading(true);
     try {
-      await tracker.start();
+      await current.start();
       if (request !== cameraRequestRef.current) return;
       setTrackerActive(true);
     } catch {
       if (request !== cameraRequestRef.current) return;
-      setCameraError(tracker.error ?? "Face tracking could not start.");
+      setCameraError(current.error ?? "Face tracking could not start.");
     } finally {
       if (request === cameraRequestRef.current) setTrackerLoading(false);
     }
@@ -454,19 +478,33 @@ export default function App() {
     setProfile(next);
   };
 
+  const onSwipeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === "mouse" || (e.target instanceof Element && e.target.closest("button"))) return;
+    swipeRef.current = { x: e.clientX, y: e.clientY, time: e.timeStamp };
+  };
+  const onSwipeEnd = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const start = swipeRef.current;
+    swipeRef.current = null;
+    if (!start || e.pointerType === "mouse") return;
+    const action = swipeAction(start, { x: e.clientX, y: e.clientY, time: e.timeStamp });
+    const current = phaseRef.current;
+    if (action && (current === "running" || current === "tutorial" || current === "over")) handleAction(action);
+  };
+
   const challenges = dailyChallenges(profile.challengeDay);
   const tutorialTarget = phase === "tutorial" ? TUTORIAL[tutorialStep]?.action : null;
   const showHud = phase === "running" || phase === "paused" || phase === "countdown" || phase === "over";
   const myEntryDate = result?.rank ? result.board[result.rank - 1]?.date : undefined;
 
   return (
-    <div className="app">
+    <div className={`app ${focus ? "is-focus" : ""}`}>
       <header className="topnav">
         <button className="brand" onClick={() => setView("play")}>
           <span className="logo"><Mascot small /></span>
-          <span>
+          <span className="brand-name">
             Going <b>Head</b> <em>Surface</em>
           </span>
+          <span className="brand-route"><Icon name="rail" />Rome Rail Pursuit</span>
         </button>
         <nav aria-label="Main navigation">
           {(
@@ -489,15 +527,30 @@ export default function App() {
         </div>
       </header>
 
-      {view === "play" && <section className="page-intro">
-        <div><div className="eyebrow"><span className="color-dots"><i /><i /><i /><i /></span> A HANDS-FREE LITTLE ADVENTURE</div><h1>Look sharp. <span>Run wild.</span></h1><p>Your face is the controller. Dodge, jump, and roll through a world of color.</p></div>
-        <div className="personal-best"><Icon name="trophy" /><div><span>YOUR PERSONAL BEST</span><strong>{profile.bestScore.toLocaleString()}</strong><small>Saved on this device</small></div></div>
-      </section>}
+      <main className={`layout ${view !== "play" ? "hidden-game" : focus ? "focus" : "landing"}`}>
+        {view === "play" && !focus && (
+          <section className="route-ticket" aria-label="Rome Rail Pursuit">
+            <span className="ticket-stamp" aria-hidden>ROMA<b>01</b></span>
+            <p className="eyebrow"><Icon name="rail" /> ROUTE 01 · ROMA → NAPOLI</p>
+            <h1>A little tilt. <span>A Roman getaway.</span></h1>
+            <p className="lede">Three mafiosi are on your heels. Tilt to switch rails, lift your chin to leap, lower it to duck. The camera works on this device only.</p>
+            <dl className="ticket-stats">
+              <div><dt>Best run</dt><dd>{profile.bestScore.toLocaleString()}</dd></div>
+              <div><dt>Runs</dt><dd>{profile.runs.toLocaleString()}</dd></div>
+              <div><dt>Quests</dt><dd>{challenges.filter((c) => profile.claimed.includes(c.id)).length}/3</dd></div>
+            </dl>
+            <ul className="cast" aria-label="Your pursuers">
+              <li><i className="cast-dot fedora" /><b>Il Cappello</b><span>the fedora</span></li>
+              <li><i className="cast-dot coat" /><b>Il Cappotto</b><span>the trenchcoat</span></li>
+              <li><i className="cast-dot floral" /><b>I Fiori</b><span>the floral shirt</span></li>
+            </ul>
+            <p className="ticket-note">Original 3D route: travertine palazzi, Naples balconies, a volcanic-stone station and two city trains.</p>
+          </section>
+        )}
 
-      <main className={`layout ${view === "play" ? "" : "hidden-game"}`}>
         <section className="game-column">
-          <div className="stage-label"><span><i className="live-dot" /> THE COLOR RUN</span><span>{inputMode === "head" ? "HEAD CONTROLS" : "KEYBOARD READY"}</span></div>
-          <div className="game-viewport">
+          <div className="stage-label"><span><i className="live-dot" /> {focus ? "NOW RUNNING · ROUTE 01" : "ROME RAIL PURSUIT"}</span><span>{inputMode === "head" ? "HEAD CONTROLS" : touchFirst ? "SWIPE CONTROLS" : "KEYBOARD READY"}</span></div>
+          <div className="game-viewport" onPointerDown={onSwipeStart} onPointerUp={onSwipeEnd} onPointerCancel={() => { swipeRef.current = null; }}>
             <div ref={gameRef} className="game-canvas" />
             {showHud && <Hud hud={hud} onPause={phase === "running" ? () => pause("user") : undefined} />}
 
@@ -524,23 +577,19 @@ export default function App() {
             {phase === "menu" && !webglError && (
               <div className="overlay menu">
                 <div className="menu-title">
+                  <span className="menu-kicker">Rome Rail Pursuit</span>
                   <h1>
                     Going <span>Head</span> Surface
                   </h1>
-                  <p className="tagline">Your face is the controller.</p>
+                  <p className="tagline">Your head is the controller. They are right behind you.</p>
                 </div>
                 <button className="primary big" onClick={startHead}>
                   <Icon name="play" /> Play with your head
                 </button>
                 <button className="secondary" onClick={startKeyboard}>
-                  <Icon name="keyboard" /> Play with keyboard
+                  <Icon name={touchFirst ? "touch" : "keyboard"} /> {touchFirst ? "Play with swipes" : "Play with keyboard"}
                 </button>
                 <p className="menu-privacy"><Icon name="shield" /> Camera stays local. No recording.</p>
-                <div className="menu-stats">
-                  <span>Best {profile.bestScore.toLocaleString()}</span>
-                  <span>·</span>
-                  <span>{challenges.filter((c) => profile.claimed.includes(c.id)).length}/3 daily challenges</span>
-                </div>
               </div>
             )}
 
@@ -554,7 +603,7 @@ export default function App() {
                       Try again
                     </button>
                     <button className="secondary" onClick={startKeyboard}>
-                      Play with keyboard
+                      {touchFirst ? "Play with swipes" : "Play with keyboard"}
                     </button>
                   </>
                 ) : (
@@ -564,7 +613,7 @@ export default function App() {
                     <p>
                       {trackerLoading
                         ? "Allow camera access when your browser asks. The face model loads once and runs locally."
-                        : "Sit centred in front of the camera with your face well lit."}
+                        : "Hold the screen at eye level with your face well lit and inside the camera preview."}
                     </p>
                   </>
                 )}
@@ -580,8 +629,8 @@ export default function App() {
                   <span><Mascot small /></span>
                 </div>
                 <h2>Hold still and look at the screen</h2>
-                <p>{calibration.message || "Recording your neutral pose…"}</p>
-                <button className="link" onClick={startKeyboard}>Use keyboard instead</button>
+                <p>{calibration.message || "Measuring your neutral pose…"}</p>
+                <button className="link" onClick={startKeyboard}>{touchFirst ? "Use swipes instead" : "Use keyboard instead"}</button>
               </div>
             )}
 
@@ -596,7 +645,7 @@ export default function App() {
                     <i key={t.action} className={i < tutorialStep ? "done" : i === tutorialStep ? "current" : ""} />
                   ))}
                 </div>
-                <p className="muted">Then return to neutral. Keyboard works too.</p>
+                <p className="muted">Then return to neutral. {touchFirst ? "Swipes" : "Keyboard"} work too.</p>
                 <button
                   className="link"
                   onClick={() => {
@@ -639,7 +688,7 @@ export default function App() {
             {phase === "over" && result && (
               <div className="overlay results">
                 <span className="crash-label">
-                  {result.crashedInto === "barrier" ? "Tripped on a barrier" : result.crashedInto === "gate" ? "Bonked a gate" : "Hit a train"}
+                  {result.crashedInto === "barrier" ? "Tripped on a barrier · they caught you" : result.crashedInto === "gate" ? "Bonked a gate · they caught you" : "Hit a train · they caught you"}
                 </span>
                 <h2>{result.score.toLocaleString()}</h2>
                 {result.newBest && <span className="badge">New best!</span>}
@@ -672,19 +721,19 @@ export default function App() {
                 <button className="primary big" onClick={beginRun}>
                   Run again
                 </button>
-                <p className="muted">{inputMode === "head" ? `…or just look ${settings.invertVertical ? "down" : "up"}` : "…or press ↑ / Enter"}</p>
+                <p className="muted">{inputMode === "head" ? `…or just look ${settings.invertVertical ? "down" : "up"}` : touchFirst ? "…or swipe up" : "…or press ↑ / Enter"}</p>
                 <button className="link" onClick={toMenu}>
                   Menu
                 </button>
               </div>
             )}
           </div>
-          <div className="stage-footer"><span><Icon name="shield" /> Private by design</span><span><kbd>P</kbd> pause · <kbd>↑</kbd> jump · <kbd>↓</kbd> roll</span></div>
+          <div className="stage-footer"><span><Icon name="shield" /> Private by design</span><span>{touchFirst ? "Swipe ← → to switch · ↑ jump · ↓ roll" : <><kbd>P</kbd> pause · <kbd>↑</kbd> jump · <kbd>↓</kbd> roll</>}</span></div>
         </section>
 
         <aside className="side-column">
           <CameraPanel
-            tracker={trackerRef.current}
+            tracker={tracker}
             engine={engine}
             active={trackerActive}
             loading={trackerLoading}
@@ -733,7 +782,7 @@ export default function App() {
           </section>
         )}
       </main>
-      <footer className="site-footer"><span>Made for curious heads.</span><span>Original game · Google-inspired colors · Not affiliated with Google</span></footer>
+      <footer className="site-footer"><span>Made for curious heads.</span><span>Original game and Rome route models · Not affiliated with Google or any rail operator</span></footer>
     </div>
   );
 }

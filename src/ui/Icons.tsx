@@ -1,9 +1,11 @@
 import type { CSSProperties } from "react";
 
-export type IconName = "play" | "camera" | "keyboard" | "shield" | "trophy" | "sound" | "muted" | "left" | "right" | "jump" | "roll" | "refresh" | "power";
+export type IconName = "play" | "camera" | "keyboard" | "shield" | "trophy" | "sound" | "muted" | "left" | "right" | "jump" | "roll" | "refresh" | "power" | "rail" | "touch";
 
 const PATHS: Record<IconName, string> = {
   play: "m9 5 11 7-11 7V5Z",
+  rail: "M6 15V6c0-2 12-2 12 0v9c0 4-12 4-12 0ZM6 10h12M9 14h.01M15 14h.01M9 18l-3 3m9-3 3 3M8 21h8M12 4v6",
+  touch: "M10 13V5a2 2 0 0 1 4 0v7m0-2 3 1 3 2v5l-3 4h-6l-6-7a2 2 0 0 1 3-2l2 2",
   camera: "M4 7h4l2-3h4l2 3h4v13H4V7Zm8 3a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z",
   keyboard: "M3 6h18v12H3V6Zm4 4h.01M11 10h.01M15 10h.01M18 10h.01M7 14h10",
   shield: "m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Zm-4 9 3 3 5-6",

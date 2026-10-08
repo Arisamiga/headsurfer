@@ -3,6 +3,7 @@
 node_modules
 dist
 public/mediapipe
+asset-sources
 .cache
 *.tsbuildinfo
 npm-debug.log*
