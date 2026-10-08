@@ -1,0 +1,11 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Build-time and browser-visible. Override only with another public model URL.
+        VITE_FACE_MODEL_URL: ${VITE_FACE_MODEL_URL:-/mediapipe/face_landmarker.task}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

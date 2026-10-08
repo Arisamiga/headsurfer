@@ -5,7 +5,7 @@ export function LeaderboardView({ board, highlightDate }: { board: LeaderboardEn
   return (
     <div className="page">
       <h2>Leaderboard</h2>
-      <p className="muted">Top runs on this device. Online seasonal boards need accounts and a backend, which are not part of this build.</p>
+      <p className="muted">Your greatest runs, saved on this device. A little friendly competition with yourself.</p>
       {board.length === 0 ? (
         <p className="empty">No runs yet. Go set the first score.</p>
       ) : (
@@ -28,7 +28,7 @@ export function LeaderboardView({ board, highlightDate }: { board: LeaderboardEn
                 <td>{e.score.toLocaleString()}</td>
                 <td>{e.distance.toLocaleString()} m</td>
                 <td>{e.coins}</td>
-                <td>{e.input === "head" ? "🙂 Head" : "⌨ Keys"}</td>
+                <td>{e.input === "head" ? "Head" : "Keys"}</td>
               </tr>
             ))}
           </tbody>
@@ -106,7 +106,7 @@ export function HowItWorksView() {
           <strong>Allow the camera.</strong> A face model runs in your browser (MediaPipe Face Landmarker). Video never leaves your device.
         </li>
         <li>
-          <strong>Hold still to calibrate.</strong> We record your neutral pose, so any seating position or camera angle works.
+          <strong>Hold still to calibrate.</strong> We measure your neutral pose for this session. Sit centered with your face well lit.
         </li>
         <li>
           <strong>Learn four gestures.</strong> Look up to jump, look down to roll, tilt left or right to switch lanes.
@@ -164,6 +164,7 @@ export function SettingsView({ settings, onChange }: { settings: Settings; onCha
       <Toggle label="Show face landmarks" checked={settings.showLandmarks} onChange={(v) => set("showLandmarks", v)} />
       <Toggle label="Show webcam video" checked={settings.showCamera} onChange={(v) => set("showCamera", v)} />
       <Toggle label="Sound effects" checked={settings.sound} onChange={(v) => set("sound", v)} />
+      <Toggle label="Reduce motion (no camera sway or screen shake)" checked={settings.reducedMotion} onChange={(v) => set("reducedMotion", v)} />
     </div>
   );
 }
