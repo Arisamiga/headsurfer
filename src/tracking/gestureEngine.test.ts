@@ -83,6 +83,24 @@ describe("GestureEngine", () => {
     expect(feed(engine, offset({ rollDeg: 20 }), 1, 1066)).toEqual(["left"]);
   });
 
+  it("keeps smoothing and dwell responsive at 30 FPS and 20 FPS", () => {
+    const at30 = calibrated({ smoothing: 0.55, holdFrames: 2, cooldownMs: 0 });
+    const at20 = calibrated({ smoothing: 0.55, holdFrames: 2, cooldownMs: 0 });
+    // Establish the same neutral filter state, then use actual sample times.
+    at30.update(neutral, 1000);
+    at20.update(neutral, 1000);
+
+    expect(at30.update(offset({ rollDeg: 20 }), 1033)).toBeNull();
+    expect(at20.update(offset({ rollDeg: 20 }), 1050)).toBeNull();
+    // The lower-rate sample advances farther through the same time constant,
+    // rather than using an identical per-frame response and feeling delayed.
+    expect(at20.signals.lateral).toBeGreaterThan(at30.signals.lateral);
+
+    expect(at30.update(offset({ rollDeg: 20 }), 1066)).toBeNull();
+    expect(at30.update(offset({ rollDeg: 20 }), 1099)).toBe("left");
+    expect(at20.update(offset({ rollDeg: 20 }), 1100)).toBe("left");
+  });
+
   it("applies a cooldown after each action", () => {
     const engine = calibrated({ holdFrames: 1, cooldownMs: 500 });
     expect(engine.update(offset({ rollDeg: 20 }), 1000)).toBe("left");
@@ -155,5 +173,24 @@ describe("GestureEngine", () => {
     engine.update(neutral, 1066);
     expect(engine.signals.lateral).toBe(0);
     expect(engine.signals.neutral).toBe(true);
+  });
+
+  it("rejects an isolated extreme landmark spike without making a normal tilt harder", () => {
+    const engine = calibrated({ smoothing: 1, holdFrames: 1, cooldownMs: 0 });
+    expect(engine.update(offset({ rollDeg: 55 }), 1000)).toBeNull();
+    expect(engine.update(neutral, 1033)).toBeNull();
+    // A normal, sustained game gesture remains the same magnitude and fires.
+    expect(engine.update(offset({ rollDeg: 20 }), 1066)).toBe("left");
+  });
+
+  it("does not fire from the first non-neutral sample after stale video", () => {
+    const engine = calibrated({ smoothing: 1, holdFrames: 2, cooldownMs: 0 });
+    engine.update(neutral, 1000);
+    engine.update(offset({ rollDeg: 20 }), 1033);
+    engine.update(null, 1066);
+
+    expect(engine.update(offset({ rollDeg: 20 }), 1099)).toBeNull();
+    expect(engine.update(offset({ rollDeg: 20 }), 1132)).toBeNull();
+    expect(engine.update(offset({ rollDeg: 20 }), 1165)).toBe("left");
   });
 });

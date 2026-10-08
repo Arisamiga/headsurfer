@@ -9,7 +9,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          three: ["three"],
+          three: ["three", "three/examples/jsm/loaders/GLTFLoader.js", "three/examples/jsm/libs/meshopt_decoder.module.js"],
           vision: ["@mediapipe/tasks-vision"],
         },
       },
