@@ -18,6 +18,14 @@ function calibrated(config = {}) {
   return engine;
 }
 
+function calibratedWithSmoothing(config = {}) {
+  const engine = new GestureEngine(config);
+  engine.beginCalibration();
+  for (let i = 0; i < 10; i++) engine.update(neutral, i * 33);
+  expect(engine.finishCalibration()).toBe(true);
+  return engine;
+}
+
 function feed(engine: GestureEngine, pose: HeadPose, frames: number, start: number) {
   const fired = [];
   for (let i = 0; i < frames; i++) {
@@ -28,10 +36,10 @@ function feed(engine: GestureEngine, pose: HeadPose, frames: number, start: numb
 }
 
 describe("GestureEngine", () => {
-  it("defaults to tilt-only lane controls in both the engine and settings", () => {
-    expect(new GestureEngine().config.lateralMode).toBe("tilt");
-    expect(DEFAULT_SETTINGS.lateralMode).toBe("tilt");
-    expect(feed(calibrated(), offset({ yaw: 0.3 }), 10, 1000)).toEqual([]);
+  it("defaults to combined tilt-or-turn lane controls in both the engine and settings", () => {
+    expect(new GestureEngine().config.lateralMode).toBe("both");
+    expect(DEFAULT_SETTINGS.lateralMode).toBe("both");
+    expect(feed(calibrated(), offset({ yaw: 0.3 }), 10, 1000)).toEqual(["left"]);
   });
 
   it("accepts a slow tilt once and rearms after returning to centre", () => {
@@ -78,27 +86,45 @@ describe("GestureEngine", () => {
   });
 
   it("requires the gesture to hold for several frames", () => {
-    const engine = calibrated({ holdFrames: 3 });
+    const engine = calibrated({ holdFrames: 3, fastTrigger: 99 });
     expect(feed(engine, offset({ rollDeg: 20 }), 2, 1000)).toEqual([]);
     expect(feed(engine, offset({ rollDeg: 20 }), 1, 1066)).toEqual(["left"]);
   });
 
-  it("keeps smoothing and dwell responsive at 30 FPS and 20 FPS", () => {
-    const at30 = calibrated({ smoothing: 0.55, holdFrames: 2, cooldownMs: 0 });
-    const at20 = calibrated({ smoothing: 0.55, holdFrames: 2, cooldownMs: 0 });
-    // Establish the same neutral filter state, then use actual sample times.
+  it("fires a strong clean gesture immediately instead of waiting for a second frame", () => {
+    const engine = calibrated();
+    expect(engine.update(offset({ rollDeg: 20 }), 1000)).toBe("left");
+  });
+
+  it("keeps an early lateral intent through a modest diagonal component", () => {
+    const engine = calibrated({ fastTrigger: 99, smoothing: 1 });
+    expect(engine.update(offset({ rollDeg: 9, pitch: 0.01 }), 1000)).toBeNull();
+    expect(engine.update(offset({ rollDeg: 14, pitch: 0.08 }), 1033)).toBeNull();
+    expect(engine.update(offset({ rollDeg: 14, pitch: 0.08 }), 1066)).toBe("left");
+  });
+
+  it("does not reverse a signed tilt intent when the alternate lateral signal disagrees", () => {
+    const engine = calibrated({ fastTrigger: 99 });
+    expect(engine.update(offset({ rollDeg: 9 }), 1000)).toBeNull();
+    expect(engine.update(offset({ rollDeg: -20, yaw: 0.3 }), 1033)).toBeNull();
+    expect(engine.update(offset({ rollDeg: -20, yaw: 0.3 }), 1066)).toBeNull();
+  });
+
+  it("does not let the fast path override an existing conflicting signed intent", () => {
+    const engine = calibrated();
+    expect(engine.update(offset({ rollDeg: 9 }), 1000)).toBeNull();
+    expect(engine.update(offset({ rollDeg: -20, yaw: 0.3 }), 1033)).toBeNull();
+  });
+
+  it("keeps the same filter response over equivalent elapsed time at 20 FPS", () => {
+    const at30 = calibratedWithSmoothing({ fastTrigger: 99, holdFrames: 99 });
+    const at20 = calibratedWithSmoothing({ fastTrigger: 99, holdFrames: 99 });
+    const pose = offset({ rollDeg: 15 });
     at30.update(neutral, 1000);
     at20.update(neutral, 1000);
-
-    expect(at30.update(offset({ rollDeg: 20 }), 1033)).toBeNull();
-    expect(at20.update(offset({ rollDeg: 20 }), 1050)).toBeNull();
-    // The lower-rate sample advances farther through the same time constant,
-    // rather than using an identical per-frame response and feeling delayed.
-    expect(at20.signals.lateral).toBeGreaterThan(at30.signals.lateral);
-
-    expect(at30.update(offset({ rollDeg: 20 }), 1066)).toBeNull();
-    expect(at30.update(offset({ rollDeg: 20 }), 1099)).toBe("left");
-    expect(at20.update(offset({ rollDeg: 20 }), 1100)).toBe("left");
+    for (const time of [1033, 1066, 1099]) at30.update(pose, time);
+    for (const time of [1050, 1100]) at20.update(pose, time);
+    expect(at20.signals.lateral).toBeCloseTo(at30.signals.lateral, 2);
   });
 
   it("applies a cooldown after each action", () => {
@@ -184,10 +210,12 @@ describe("GestureEngine", () => {
   });
 
   it("does not fire from the first non-neutral sample after stale video", () => {
-    const engine = calibrated({ smoothing: 1, holdFrames: 2, cooldownMs: 0 });
+    const engine = calibrated({ smoothing: 1, holdFrames: 2, cooldownMs: 0, fastTrigger: 99 });
     engine.update(neutral, 1000);
     engine.update(offset({ rollDeg: 20 }), 1033);
     engine.update(null, 1066);
+    engine.update(null, 1082);
+    engine.update(null, 1098);
 
     expect(engine.update(offset({ rollDeg: 20 }), 1099)).toBeNull();
     expect(engine.update(offset({ rollDeg: 20 }), 1132)).toBeNull();

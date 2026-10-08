@@ -330,6 +330,9 @@ kbd {
 .quick-sensitivity > span { white-space: nowrap; }
 .quick-sensitivity b { margin-left: 4px; color: var(--cyan); font-variant-numeric: tabular-nums; }
 .quick-sensitivity input, .field input[type="range"] { flex: 1; accent-color: var(--cyan); }
+.tracking-debug { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: #071222; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.tracking-debug summary { cursor: pointer; color: var(--cyan); font: 700 11px "Segoe UI", system-ui, sans-serif; }
+.tracking-debug > div { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; margin-top: 10px; }
 
 /* Gesture compass */
 .compass-panel { display: flex; flex-direction: column; }
@@ -497,6 +500,7 @@ kbd {
 .popup.good { color: var(--yellow); border-color: #ffc83d66; }
 .popup.power { color: var(--green); border-color: #2fe38c66; }
 .popup.bad { color: var(--red); border-color: #ff4f6a66; }
+.popup.info { color: var(--cyan); border-color: #22d3ee66; font-size: 12px; }
 @keyframes popup { 0% { transform: translateY(10px); opacity: 0; } 15% { opacity: 1; } 100% { transform: translateY(-25px); opacity: 0; } }
 
 /* ---------- Overlays ---------- */

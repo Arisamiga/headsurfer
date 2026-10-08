@@ -916,8 +916,8 @@ export class GameRenderer {
         this.setInstance(this.railPosts, index, side * 5.4, 2.55, z, 0.18, 5.1, 0.18);
         this.setInstance(this.railFeet, index, side * 5.4, 0.09, z, 0.7, 0.18, 0.7);
       }
-      this.setInstance(this.railBeams, prop.index, 0, 4.85, z, 0, 0, 0);
-      this.setInstance(this.railWires, prop.index, 0, 4.42, z, 0, 0, 0);
+      this.setInstance(this.railBeams, prop.index, 0, 4.85, z, 11.1, 0.14, 0.14);
+      this.setInstance(this.railWires, prop.index, 0, 4.42, z, 8.2, 0.035, 0.035);
       const stationTemplate = this.modelTemplates.get("station");
       if (SHOW_STATION_CANOPY && this.stationBatches && stationTemplate && prop.station && prop.stationX !== undefined) {
         const side = Math.sign(prop.stationX);

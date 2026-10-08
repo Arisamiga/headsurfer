@@ -23,6 +23,16 @@ interface Props {
   onToggleCamera: () => void;
   onRecalibrate: () => void;
   canRecalibrate: boolean;
+  showDiagnostics: boolean;
+  diagnostics: {
+    inferenceMs: number | null;
+    inferenceFps: number;
+    targetInferenceFps: number;
+    frameToActionMs: number | null;
+    frameToNextFrameMs: number | null;
+    lastAction: string | null;
+    lastOutcome: "accepted" | "blocked" | null;
+  };
 }
 
 const OVERLAY_POINTS = [1, 4, 10, 152, 33, 133, 263, 362, 61, 291, 234, 454, 70, 300, 13, 14, 168, 197, 5, 50, 280, 105, 334, 159, 386];
@@ -74,7 +84,28 @@ export function CameraPanel(props: Props) {
         puckRef.current.style.top = `${50 + clamp(-physicalUp)}%`;
         puckRef.current.dataset.state = !frame.pose ? "lost" : signals.neutral ? "neutral" : "moving";
       }
-      const label = frame.poseQuality === "waiting-video" ? "Waiting for camera video…" : frame.poseQuality === "stale-video" ? "Camera stalled · restart capture" : frame.poseQuality === "inference-error" ? "Tracking interrupted · try restarting" : !frame.pose ? "Keep your face in the frame" : !engine.calibrated ? "Measuring your neutral pose" : !signals.armed ? "Return to centre" : signals.neutral ? "Centred · ready" : "Reading your movement";
+      const lateralVerb = engine.config.lateralMode === "turn" ? "Turn" : engine.config.lateralMode === "tilt" ? "Tilt" : "Tilt or turn";
+      const label = frame.poseQuality === "waiting-video"
+        ? "Waiting for camera video…"
+        : frame.poseQuality === "stale-video"
+          ? "Camera stalled · restart capture"
+          : frame.poseQuality === "inference-error"
+            ? "Tracking interrupted · try restarting"
+            : !frame.pose
+              ? "Keep your face in the frame"
+              : !engine.calibrated
+                ? "Measuring your neutral pose"
+                : !signals.armed
+                  ? "Return to centre to re-arm"
+                  : signals.lateral >= 0.62
+                    ? `${lateralVerb} left a little further`
+                    : signals.lateral <= -0.62
+                      ? `${lateralVerb} right a little further`
+                      : signals.vertical >= 0.62
+                        ? "Lift your chin a little further"
+                        : signals.vertical <= -0.62
+                          ? "Lower your chin a little further"
+                          : "Centred · ready";
       const inference = Math.round(frame.telemetry.averageInferenceMs ?? frame.inferenceMs);
       const fps = Math.round(frame.telemetry.inferenceFps);
       const targetFps = frame.telemetry.targetInferenceFps;
@@ -184,6 +215,18 @@ export function CameraPanel(props: Props) {
             <input type="range" min="0.5" max="2" step="0.05" value={props.sensitivity} aria-label="Head control sensitivity" onChange={(e) => props.onSensitivity(Number(e.target.value))} />
           </label>
         </div>
+        {props.showDiagnostics && (
+          <details className="tracking-debug">
+            <summary>Input diagnostics</summary>
+            <div>
+              <span>Tracking {props.diagnostics.inferenceFps.toFixed(1)} / {props.diagnostics.targetInferenceFps} FPS</span>
+              <span>Inference {props.diagnostics.inferenceMs === null ? "—" : `${Math.round(props.diagnostics.inferenceMs)} ms`}</span>
+              <span>Frame → action {props.diagnostics.frameToActionMs === null ? "—" : `${Math.round(props.diagnostics.frameToActionMs)} ms`}</span>
+              <span>Frame → next frame {props.diagnostics.frameToNextFrameMs === null ? "—" : `${Math.round(props.diagnostics.frameToNextFrameMs)} ms`}</span>
+              <span>Last input {props.diagnostics.lastAction ? `${props.diagnostics.lastAction} · ${props.diagnostics.lastOutcome}` : "—"}</span>
+            </div>
+          </details>
+        )}
       </div>
 
       <div className="panel compass-panel" aria-label="Gesture map">
@@ -207,8 +250,8 @@ export function CameraPanel(props: Props) {
           <span ref={puckRef} className="compass-puck" data-state="off" aria-hidden />
           <div key={dirKey(upAction)} className={`dir dir-up ${hit(upAction)}`}><Icon name="jump" /><span><b>Look up</b>{invertVertical ? "Roll / slide" : "Jump"}</span></div>
           <div key={dirKey(downAction)} className={`dir dir-down ${hit(downAction)}`}><Icon name="roll" /><span><b>Look down</b>{invertVertical ? "Jump" : "Roll / slide"}</span></div>
-          <div key={dirKey("left")} className={`dir dir-left ${hit("left")}`}><Icon name="left" /><span><b>Tilt left</b>Move left</span></div>
-          <div key={dirKey("right")} className={`dir dir-right ${hit("right")}`}><Icon name="right" /><span><b>Tilt right</b>Move right</span></div>
+          <div key={dirKey("left")} className={`dir dir-left ${hit("left")}`}><Icon name="left" /><span><b>Tilt or turn left</b>Move left</span></div>
+          <div key={dirKey("right")} className={`dir dir-right ${hit("right")}`}><Icon name="right" /><span><b>Tilt or turn right</b>Move right</span></div>
         </div>
         <p className="compass-note">{active ? (faceFound ? `${feedback.inference} ms inference · on-device` : "Front camera · local processing") : "Turn the camera on to see your head move live."}</p>
       </div>

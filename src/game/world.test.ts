@@ -20,13 +20,37 @@ describe("World", () => {
 
   it("changes lanes one at a time within bounds", () => {
     const world = new World(1, { spawn: false });
-    world.apply("left");
-    world.apply("left");
+    expect(world.apply("left")).toEqual({ accepted: true, action: "left" });
+    expect(world.apply("left")).toEqual({ accepted: false, action: "left", reason: "lane-edge" });
     expect(world.player.lane).toBe(-1);
     step(world, 0.5);
     expect(world.player.x).toBeCloseTo(laneX(-1), 1);
     world.apply("right");
     expect(world.player.lane).toBe(0);
+  });
+
+  it("reports blocked actions instead of pretending the player moved", () => {
+    const world = new World(1, { spawn: false });
+    world.apply("left");
+    world.apply("left");
+    expect(world.apply("left")).toEqual({ accepted: false, action: "left", reason: "lane-edge" });
+
+    world.apply("jump");
+    expect(world.apply("jump")).toEqual({ accepted: false, action: "jump", reason: "airborne" });
+  });
+
+  it("does not accept duplicate rolls that are already active or queued", () => {
+    const grounded = new World(1, { spawn: false });
+    expect(grounded.apply("roll")).toEqual({ accepted: true, action: "roll" });
+    expect(grounded.apply("roll")).toEqual({ accepted: false, action: "roll", reason: "rolling" });
+
+    const airborne = new World(1, { spawn: false });
+    airborne.apply("jump");
+    expect(airborne.apply("roll")).toEqual({ accepted: true, action: "roll" });
+    expect(airborne.apply("roll")).toEqual({ accepted: false, action: "roll", reason: "roll-queued" });
+    airborne.update(1 / 60);
+    expect(airborne.rolling).toBe(true);
+    expect(airborne.player.vy).toBe(0);
   });
 
   it("crashes into a train in the same lane", () => {
