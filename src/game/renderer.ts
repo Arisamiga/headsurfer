@@ -13,7 +13,8 @@ const MODEL_WIDTH = 2.08;
 // The generated canopy reads as a block on the line at gameplay distances.
 const SHOW_STATION_CANOPY: boolean = false;
 const modelUrl = (name: string) => `${import.meta.env.BASE_URL}assets/models/${name}.glb`;
-const rajAssetUrl = () => `${import.meta.env.BASE_URL}assets/characters/raj.glb`;
+type AvatarKey = Exclude<Character["playerModel"], "procedural">;
+const characterAssetUrl = (character: AvatarKey) => `${import.meta.env.BASE_URL}assets/characters/${character}.glb`;
 
 type FacadeKey = "palazzo" | "naples";
 type ModelKey = FacadeKey | "station" | "silverTrain" | "terracottaTrain" | "fedora" | "trenchcoat" | "floral";
@@ -68,6 +69,14 @@ interface AvatarMaterial {
   baseColor: THREE.Color;
 }
 
+interface AvatarAsset {
+  root: THREE.Group;
+  mixer: THREE.AnimationMixer;
+  actions: Partial<Record<Exclude<PlayerClip, "idle">, THREE.AnimationAction>>;
+  materials: AvatarMaterial[];
+  activeClip: PlayerClip;
+}
+
 interface PlayerRig {
   root: THREE.Group;
   body: THREE.Group;
@@ -81,10 +90,8 @@ interface PlayerRig {
   blob: THREE.Mesh;
   materials: { body: THREE.MeshStandardMaterial; head: THREE.MeshStandardMaterial; accent: THREE.MeshStandardMaterial };
   avatar: THREE.Group;
-  mixer: THREE.AnimationMixer | null;
-  actions: Partial<Record<Exclude<PlayerClip, "idle">, THREE.AnimationAction>>;
-  activeClip: PlayerClip;
-  avatarMaterials: AvatarMaterial[];
+  avatars: Partial<Record<AvatarKey, AvatarAsset>>;
+  activeAvatar: AvatarAsset | null;
 }
 
 interface ActiveVisual {
@@ -261,7 +268,8 @@ export class GameRenderer {
     this.createCoinInstances();
     this.player = this.createPlayer();
     this.scene.add(this.player.root);
-    this.loadRajCharacterAsset();
+    this.loadCharacterAsset("konrad");
+    this.loadCharacterAsset("raj");
     this.camera.position.set(0, 4.4, 7.2);
     this.resize();
     // Missing model files are an expected optional-asset path; procedural
@@ -741,34 +749,38 @@ export class GameRenderer {
       blob,
       materials,
       avatar,
-      mixer: null,
-      actions: {},
-      activeClip: "idle",
-      avatarMaterials: [],
+      avatars: {},
+      activeAvatar: null,
     };
   }
 
   setCharacter(character: Character) {
     this.selectedCharacter = character;
-    const showRaj = character.playerModel === "raj" && this.player.mixer !== null;
-    this.player.avatar.visible = showRaj;
-    this.player.body.visible = !showRaj;
-    if (!showRaj) return;
+    const selectedAvatar = character.playerModel === "procedural"
+      ? null
+      : this.player.avatars[character.playerModel] ?? null;
+    for (const avatar of Object.values(this.player.avatars)) {
+      if (avatar) avatar.root.visible = avatar === selectedAvatar;
+    }
+    this.player.activeAvatar = selectedAvatar;
+    this.player.avatar.visible = selectedAvatar !== null;
+    this.player.body.visible = selectedAvatar === null;
+    if (!selectedAvatar) return;
     const tint = new THREE.Color(character.tint);
-    for (const entry of this.player.avatarMaterials) entry.material.color.copy(entry.baseColor).multiply(tint);
+    for (const entry of selectedAvatar.materials) entry.material.color.copy(entry.baseColor).multiply(tint);
   }
 
-  /** Preloads Raj's skinned GLB; it becomes visible only after the player selects Raj. */
-  private loadRajCharacterAsset() {
+  /** Preloads each supplied skinned GLB; selection remains procedural until it is ready. */
+  private loadCharacterAsset(character: AvatarKey) {
     this.modelLoader.load(
-      rajAssetUrl(),
+      characterAssetUrl(character),
       (gltf) => {
         if (this.disposed) {
           this.disposeAvatar(gltf.scene);
           return;
         }
         const rig = this.player;
-        gltf.scene.name = "Raj_Mixamo_Rig";
+        gltf.scene.name = `${character[0].toUpperCase()}${character.slice(1)}_Mixamo_Rig`;
         gltf.scene.updateMatrixWorld(true);
         const bounds = new THREE.Box3().setFromObject(gltf.scene);
         const height = bounds.getSize(new THREE.Vector3()).y;
@@ -779,27 +791,35 @@ export class GameRenderer {
         gltf.scene.scale.setScalar(1.9 / height);
         gltf.scene.updateMatrixWorld(true);
         gltf.scene.position.y -= new THREE.Box3().setFromObject(gltf.scene).min.y;
+        const avatarMaterials: AvatarMaterial[] = [];
         gltf.scene.traverse((object) => {
           if (!(object instanceof THREE.Mesh)) return;
           object.castShadow = false;
           object.receiveShadow = false;
-          const materials = Array.isArray(object.material) ? object.material : [object.material];
-          for (const material of materials) {
+          const meshMaterials = Array.isArray(object.material) ? object.material : [object.material];
+          for (const material of meshMaterials) {
             if (material instanceof THREE.MeshStandardMaterial) {
-              rig.avatarMaterials.push({ material, baseColor: material.color.clone() });
+              avatarMaterials.push({ material, baseColor: material.color.clone() });
             }
           }
         });
+        gltf.scene.visible = false;
         rig.avatar.add(gltf.scene);
-        rig.mixer = new THREE.AnimationMixer(gltf.scene);
+        const mixer = new THREE.AnimationMixer(gltf.scene);
         const actionFor = (name: string) => {
           const clip = gltf.animations.find((candidate) => candidate.name === name);
-          return clip ? rig.mixer!.clipAction(clip) : undefined;
+          return clip ? mixer.clipAction(clip) : undefined;
         };
-        rig.actions = {
-          run: actionFor("Run"),
-          jump: actionFor("BigJump"),
-          roll: actionFor("RunToRolling"),
+        rig.avatars[character] = {
+          root: gltf.scene,
+          mixer,
+          actions: {
+            run: actionFor("Run"),
+            jump: actionFor("BigJump"),
+            roll: actionFor("RunToRolling"),
+          },
+          materials: avatarMaterials,
+          activeClip: "idle",
         };
         if (this.selectedCharacter) this.setCharacter(this.selectedCharacter);
       },
@@ -811,13 +831,13 @@ export class GameRenderer {
   }
 
   private setAvatarClip(clip: PlayerClip) {
-    const rig = this.player;
-    if (!rig.mixer || rig.activeClip === clip) return;
-    const previous = rig.activeClip === "idle" ? undefined : rig.actions[rig.activeClip];
+    const avatar = this.player.activeAvatar;
+    if (!avatar || avatar.activeClip === clip) return;
+    const previous = avatar.activeClip === "idle" ? undefined : avatar.actions[avatar.activeClip];
     previous?.fadeOut(0.1);
-    rig.activeClip = clip;
+    avatar.activeClip = clip;
     if (clip === "idle") return;
-    const action = rig.actions[clip] ?? rig.actions.run;
+    const action = avatar.actions[clip] ?? avatar.actions.run;
     if (!action) return;
     action.reset();
     action.enabled = true;
@@ -835,7 +855,7 @@ export class GameRenderer {
   private updateAvatarAnimation(running: boolean, airborne: boolean, rolling: boolean, crashed: boolean, dt: number) {
     const clip: PlayerClip = crashed ? "idle" : rolling ? "roll" : airborne ? "jump" : running ? "run" : "idle";
     this.setAvatarClip(clip);
-    this.player.mixer?.update(dt);
+    this.player.activeAvatar?.mixer.update(dt);
   }
 
   private disposeAvatar(root: THREE.Object3D) {
